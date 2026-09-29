@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:"
+    />
+    <title>Claude accounts</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="bar">
+        <div class="title">
+          <h1>Claude accounts</h1>
+          <p id="subtitle" class="muted"></p>
+        </div>
+        <button id="refresh" class="icon-btn" type="button" title="Refresh" aria-label="Refresh">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.76-4.24M16 3.5V6.5h-3" /></svg>
+        </button>
+        <button id="menu" class="icon-btn" type="button" title="More" aria-label="More">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.5" cy="10" r="1.4" /><circle cx="10" cy="10" r="1.4" /><circle cx="15.5" cy="10" r="1.4" /></svg>
+        </button>
+      </header>
+      <div id="banner" class="banner" role="alert" hidden></div>
+      <main id="content"><div id="list"></div></main>
+      <footer id="footer" class="bar" hidden>
+        <button id="best" class="primary" type="button" title="Switch to the account with the most headroom (cswap switch --strategy best)">
+          Switch to best account
+        </button>
+      </footer>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script src="../shared/usage.js"></script>
+    <script src="renderer.js"></script>
+  </body>
+</html>

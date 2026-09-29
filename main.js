@@ -1,0 +1,413 @@
+'use strict';
+// Menu-bar app: a tray item showing the active account's 5h usage and a
+// frameless popover with one card per claude-swap account.
+//
+// Dev switches:
+//   CSWAP_PATH=…/fake-cswap   use another cswap binary (see test/fixtures)
+//   CSW_THEME=light|dark      force the theme
+//   CSW_CAPTURE=out.png       render once, save a screenshot of the popover, quit
+
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, nativeTheme, screen, shell, dialog, powerMonitor, clipboard } = require('electron');
+const fs = require('fs');
+const path = require('path');
+const { AccountService } = require('./src/service');
+const { loadSettings, saveSettings, THEMES } = require('./src/settings');
+const { trayInfo } = require('./src/shared/usage');
+const { trayImage } = require('./src/tray-icon');
+const { isExecutable } = require('./src/cswap');
+
+const WIDTH = 360;
+const MIN_HEIGHT = 160;
+const MAX_HEIGHT = 640;
+const REFRESH_ON_OPEN_AFTER_S = 20;
+const DOCS_URL = 'https://github.com/realiti4/claude-swap#installation';
+const CAPTURE = process.env.CSW_CAPTURE || null;
+
+let tray = null;
+let win = null;
+let service = null;
+let settings = null;
+let timer = null;
+let keepOpen = false; // set while a native dialog is up, so blur does not hide the popover
+let hiddenAt = 0;
+let readyAt = 0;
+let quitting = false;
+let wantedHeight = MIN_HEIGHT; // the renderer's natural height; clamped to the display when placed
+let crashTimes = [];
+
+if (!app.requestSingleInstanceLock()) {
+  // The lock also fails when userData cannot be written (e.g. root-owned after
+  // a `sudo` run). A real second instance quits silently; this case must not.
+  const problem = userDataProblem();
+  if (problem) {
+    const dir = app.getPath('userData');
+    console.error(`single-instance lock failed; userData not writable: ${dir}: ${problem.message}`);
+    dialog.showErrorBox(
+      'Claude accounts cannot start',
+      `The settings folder is not writable:\n${dir}\n\n${problem.code || problem.message}\n\nFix its ownership (for example: sudo chown -R "$USER" "${dir}") and start the app again.`,
+    );
+  }
+  app.quit();
+} else {
+  app.on('second-instance', () => showPopover());
+  // macOS: re-opening the running bundle (Spotlight, Launchpad, Finder) does
+  // not start a second process; Launch Services sends a reopen, which Electron
+  // delivers as 'activate'. Electron also lists first launch among its
+  // triggers, so ignore it right after start (e.g. a login-item launch).
+  app.on('activate', (_e, hasVisibleWindows) => {
+    if (!hasVisibleWindows && Date.now() - readyAt > 2000) showPopover();
+  });
+  app.on('before-quit', () => {
+    quitting = true;
+    clearInterval(timer);
+  });
+  app.whenReady().then(start);
+}
+
+function userDataProblem() {
+  const dir = app.getPath('userData');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, `.write-test-${process.pid}`);
+    fs.writeFileSync(probe, '');
+    fs.unlinkSync(probe);
+    return null;
+  } catch (err) {
+    return err;
+  }
+}
+
+function start() {
+  readyAt = Date.now();
+  if (process.platform === 'darwin') app.dock?.hide();
+  // Electron's default menu would give the popover Reload, DevTools and zoom
+  // shortcuts. Keep only Quit/Hide and Edit (copy on the setup screens).
+  if (process.platform === 'darwin') {
+    const template = [{ role: 'appMenu' }, { role: 'editMenu' }];
+    if (!app.isPackaged) template.push({ role: 'viewMenu' });
+    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  } else {
+    Menu.setApplicationMenu(null);
+  }
+  settings = loadSettings(app.getPath('userData'));
+  nativeTheme.themeSource = THEMES.includes(process.env.CSW_THEME) ? process.env.CSW_THEME : settings.theme;
+
+  service = new AccountService({ getOverride: () => settings.cswapPath });
+  service.on('state', onState);
+
+  createTray();
+  createWindow();
+  registerIpc();
+
+  service.refresh();
+  restartTimer();
+  powerMonitor.on('resume', () => service.refresh());
+  for (const ev of ['display-metrics-changed', 'display-added', 'display-removed']) {
+    screen.on(ev, () => {
+      if (popoverAlive() && win.isVisible()) positionPopover();
+    });
+  }
+}
+
+function onState(state) {
+  updateTray(state);
+  if (win && !win.isDestroyed()) win.webContents.send('accounts:state', state);
+  if (CAPTURE && state.phase !== 'loading' && !state.refreshing) scheduleCapture();
+}
+
+// ── Tray ─────────────────────────────────────────────────────────────────────
+
+function createTray() {
+  tray = new Tray(trayImage(nativeImage, null, 'none'));
+  tray.setIgnoreDoubleClickEvents(true);
+  tray.on('click', togglePopover);
+  tray.on('right-click', () => tray.popUpContextMenu(buildMenu()));
+  updateTray(service.state);
+}
+
+function updateTray(state) {
+  if (!tray || tray.isDestroyed()) return;
+  const info = trayInfo(state);
+  tray.setImage(trayImage(nativeImage, info.pct, info.level));
+  if (process.platform === 'darwin') {
+    tray.setTitle(info.title ? ` ${info.title}` : '', { fontType: 'monospacedDigit' });
+  }
+  tray.setToolTip(info.tooltip);
+}
+
+function buildMenu() {
+  const theme = nativeTheme.themeSource;
+  const login = app.getLoginItemSettings();
+  return Menu.buildFromTemplate([
+    { label: 'Refresh Now', click: () => service.refresh() },
+    { type: 'separator' },
+    {
+      label: 'Appearance',
+      submenu: THEMES.map((t) => ({
+        label: t[0].toUpperCase() + t.slice(1),
+        type: 'radio',
+        checked: theme === t,
+        click: () => setTheme(t),
+      })),
+    },
+    {
+      // Unpackaged, this would register the bare Electron binary as the login item.
+      label: 'Open at Login',
+      type: 'checkbox',
+      visible: process.platform !== 'linux' && app.isPackaged,
+      checked: login.openAtLogin || login.status === 'requires-approval',
+      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
+    },
+    { type: 'separator' },
+    { label: 'Choose cswap Binary…', click: () => chooseBinary() },
+    {
+      label: 'Use cswap from PATH',
+      visible: Boolean(settings.cswapPath),
+      click: () => setCswapPath(null),
+    },
+    { type: 'separator' },
+    { label: 'Quit', role: 'quit' },
+  ]);
+}
+
+function setTheme(theme) {
+  nativeTheme.themeSource = theme;
+  settings = saveSettings(app.getPath('userData'), { ...settings, theme });
+}
+
+function restartTimer() {
+  clearInterval(timer);
+  timer = setInterval(() => service.refresh(), Math.min(settings.refreshSeconds * 1000, 2 ** 31 - 1));
+}
+
+// ── Popover ──────────────────────────────────────────────────────────────────
+
+function createWindow() {
+  const mac = process.platform === 'darwin';
+  win = new BrowserWindow({
+    width: WIDTH,
+    height: 420,
+    show: false,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    // Native blurred material on macOS; elsewhere the page paints its own background.
+    ...(mac ? { vibrancy: 'popover', visualEffectState: 'active', backgroundColor: '#00000000' } : {}),
+    webPreferences: {
+      preload: path.join(__dirname, 'src', 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  win.loadFile(path.join(__dirname, 'src', 'renderer', 'index.html'));
+  if (mac) win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  win.on('blur', () => {
+    if (!CAPTURE && !keepOpen && !win.webContents.isDevToolsOpened()) win.hide();
+  });
+  win.on('hide', () => (hiddenAt = Date.now()));
+  // Closing (Cmd+W or any other path) would destroy the only window and
+  // leave the tray pointing at nothing: hide it instead, except when quitting.
+  win.on('close', (e) => {
+    if (!quitting) {
+      e.preventDefault();
+      hidePopover();
+    }
+  });
+  win.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape' && !win.webContents.isDevToolsOpened()) {
+      e.preventDefault();
+      hidePopover();
+    }
+  });
+  if (!app.isPackaged) {
+    win.webContents.on('console-message', ({ level, message, lineNumber, sourceId }) => {
+      console.log(`[renderer:${level}] ${message} (${path.basename(sourceId || '')}:${lineNumber})`);
+    });
+  }
+  // A dead renderer would leave a blank popover for weeks: reload it, unless it keeps crashing.
+  win.webContents.on('render-process-gone', (_e, details) => {
+    if (quitting || details.reason === 'clean-exit') return;
+    const now = Date.now();
+    crashTimes = crashTimes.filter((t) => now - t < 60_000);
+    if (crashTimes.length >= 3) return; // crash loop: showPopover() retries lazily
+    crashTimes.push(now);
+    setTimeout(() => {
+      if (!quitting && popoverAlive() && win.webContents.isCrashed()) win.webContents.reload();
+    }, 500);
+  });
+  win.webContents.on('unresponsive', () => {
+    if (popoverAlive()) win.webContents.forcefullyCrashRenderer();
+  });
+  // Pinch zoom would make the page taller than the window the renderer asked for.
+  win.webContents.on('did-finish-load', () => win.webContents.setVisualZoomLevelLimits(1, 1));
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+}
+
+function togglePopover() {
+  if (!popoverAlive()) return;
+  // macOS: the status-bar window cannot become key, so the click arrives with
+  // the popover still visible. Windows/Linux: the click blurred it first and
+  // that blur already hid it, so the click must not reopen it.
+  if (win.isVisible()) hidePopover();
+  else if (Date.now() - hiddenAt > 250) showPopover();
+}
+
+function popoverAlive() {
+  return Boolean(win && !win.isDestroyed() && tray && !tray.isDestroyed());
+}
+
+function showPopover() {
+  if (!popoverAlive()) return;
+  if (win.webContents.isCrashed()) win.webContents.reload();
+  positionPopover();
+  win.show();
+  win.focus();
+  if (service.ageSeconds() > REFRESH_ON_OPEN_AFTER_S) service.refresh();
+}
+
+// Keyboard dismissal: the popover was the key window of a dock-less app, so
+// hand focus back to the app the user came from (blur-driven hides never need this).
+// Not while a file panel is open: app.hide() would hide that panel too.
+function hidePopover() {
+  win.hide();
+  if (process.platform === 'darwin' && !keepOpen) app.hide();
+}
+
+// Under the tray icon on macOS; above it when the tray sits at the bottom
+// (Windows). The height is the renderer's natural height, clamped to the
+// display it opens on; beyond that the list scrolls.
+function positionPopover() {
+  const tb = tray.getBounds();
+  // Some Linux trays report an empty rect: anchor at the cursor instead.
+  const anchor = tb.width ? { x: tb.x + tb.width / 2, y: tb.y, h: tb.height } : { ...screen.getCursorScreenPoint(), h: 0 };
+  const wa = screen.getDisplayNearestPoint(anchor).workArea;
+  const width = WIDTH;
+  const height = Math.max(MIN_HEIGHT, Math.min(wantedHeight, MAX_HEIGHT, wa.height - 8));
+  const below = anchor.y < wa.y + wa.height / 2;
+  let x = Math.round(anchor.x - width / 2);
+  let y = below ? Math.round(anchor.y + anchor.h + 4) : Math.round(anchor.y - height - 4);
+  x = Math.max(wa.x + 8, Math.min(x, wa.x + wa.width - width - 8));
+  y = Math.max(wa.y, Math.min(y, wa.y + wa.height - height));
+  const b = win.getBounds();
+  if (b.x !== x || b.y !== y || b.width !== width || b.height !== height) win.setBounds({ x, y, width, height }, false);
+}
+
+// `height` is in CSS px; the window is sized in DIP.
+function resizePopover(height) {
+  if (!Number.isFinite(height) || !popoverAlive()) return;
+  wantedHeight = Math.ceil(height * win.webContents.getZoomFactor());
+  positionPopover();
+}
+
+// ── cswap binary override ───────────────────────────────────────────────────
+
+// keepOpen covers only the dialogs; the reconnect afterwards may wait behind
+// a running cswap call and must not make the chooser look busy.
+async function chooseBinary() {
+  if (keepOpen) {
+    // A panel is already open; if the app was hidden (Cmd+H), bring it back.
+    if (process.platform === 'darwin') app.show();
+    return service.state;
+  }
+  keepOpen = true;
+  let picked = null;
+  try {
+    const r = await dialog.showOpenDialog({
+      title: 'Choose the cswap executable',
+      message: 'Usually ~/.local/bin/cswap (uv or pipx) or /opt/homebrew/bin/cswap',
+      defaultPath: path.join(app.getPath('home'), '.local', 'bin'),
+      properties: ['openFile', 'showHiddenFiles', 'treatPackageAsDirectory'],
+    });
+    picked = (!r.canceled && r.filePaths[0]) || null;
+    if (picked && !isExecutable(picked)) {
+      await dialog.showMessageBox({ type: 'error', message: 'Not an executable file', detail: picked });
+      picked = null;
+    }
+  } finally {
+    keepOpen = false;
+  }
+  return picked ? setCswapPath(picked) : service.state;
+}
+
+async function setCswapPath(p) {
+  settings = saveSettings(app.getPath('userData'), { ...settings, cswapPath: p });
+  return service.reconnect();
+}
+
+// ── IPC ──────────────────────────────────────────────────────────────────────
+
+// A strategy, or the identity of a listed account (the service looks its
+// current slot number up again right before switching).
+function switchTarget(t) {
+  if (!t || typeof t !== 'object') return null;
+  if (['best', 'next-available'].includes(t.strategy)) return { strategy: t.strategy };
+  if (typeof t.email === 'string' && t.email && (t.organizationUuid == null || typeof t.organizationUuid === 'string')) {
+    return { email: t.email, organizationUuid: t.organizationUuid || '' };
+  }
+  return null;
+}
+
+function registerIpc() {
+  // Only our own page may call in.
+  const fromPopover = (e) => Boolean(win && !win.isDestroyed() && e.sender === win.webContents);
+
+  ipcMain.handle('app:info', (e) => (fromPopover(e) ? { platform: process.platform, capture: Boolean(CAPTURE) } : null));
+  ipcMain.handle('accounts:get', (e) => (fromPopover(e) ? service.state : null));
+  ipcMain.handle('accounts:refresh', (e) => (fromPopover(e) ? service.refresh() : null));
+  ipcMain.handle('accounts:switch', async (e, target) => {
+    if (!fromPopover(e)) return null;
+    const t = switchTarget(target);
+    if (!t) return { ok: false, error: { kind: 'invalid', message: 'Invalid switch target' } };
+    try {
+      const result = await service.switchTo(t);
+      return { ok: true, result };
+    } catch (err) {
+      return { ok: false, error: { kind: err.kind || 'unknown', message: err.message, errorType: err.errorType } };
+    }
+  });
+  ipcMain.handle('app:recheck', (e) => (fromPopover(e) ? service.reconnect() : null));
+  ipcMain.handle('app:choose-binary', (e) => (fromPopover(e) ? chooseBinary() : null));
+  ipcMain.handle('app:use-path', (e) => (fromPopover(e) ? setCswapPath(null) : null));
+  // Setup screens copy install commands; keep it to short plain text.
+  ipcMain.handle('app:copy', (e, text) => {
+    if (fromPopover(e) && typeof text === 'string' && text.length <= 200) clipboard.writeText(text);
+  });
+  ipcMain.on('app:open-docs', (e) => {
+    if (fromPopover(e)) shell.openExternal(DOCS_URL);
+  });
+  ipcMain.on('app:menu', (e) => {
+    if (fromPopover(e)) buildMenu().popup({ window: win });
+  });
+  ipcMain.on('ui:resize', (e, height) => {
+    if (fromPopover(e)) resizePopover(Number(height));
+  });
+}
+
+// ── Dev: screenshot ─────────────────────────────────────────────────────────
+
+let captureTimer = null;
+function scheduleCapture() {
+  clearTimeout(captureTimer);
+  captureTimer = setTimeout(async () => {
+    positionPopover();
+    win.showInactive();
+    await new Promise((r) => setTimeout(r, 400));
+    const img = await win.webContents.capturePage();
+    fs.writeFileSync(CAPTURE, img.toPNG());
+    const tray2x = trayImage(nativeImage, trayInfo(service.state).pct, trayInfo(service.state).level);
+    fs.writeFileSync(CAPTURE.replace(/\.png$/i, '') + '-tray.png', tray2x.toPNG({ scaleFactor: 2 }));
+    console.log(`captured ${CAPTURE}`);
+    app.quit();
+  }, 700);
+}
+
+// A tray app keeps running with its popover hidden.
+app.on('window-all-closed', () => {});

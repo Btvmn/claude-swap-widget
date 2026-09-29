@@ -1,0 +1,256 @@
+#!/usr/bin/env node
+'use strict';
+// A stand-in for the claude-swap CLI that speaks its `--json` contract
+// (schemaVersion 1). Used by the unit tests and for running the UI without
+// touching real accounts:
+//
+//   CSWAP_PATH="$PWD/test/fixtures/fake-cswap" npm start
+//
+// Environment:
+//   FAKE_CSWAP_SCENARIO  default | empty | root | garbage | slow | schema2 | old | flood | crash
+//                        | stubborn (hangs and ignores SIGINT/SIGTERM)
+//                        | rolled (account 1's 5h window reset a minute ago)
+//   FAKE_CSWAP_STATE     file that remembers the active account (switch persists)
+//   FAKE_CSWAP_VERSION   what `--version` prints (default 0.27.0b1)
+//   FAKE_CSWAP_MARKER    file where the 'slow' scenario writes the signal that stopped it
+//   FAKE_CSWAP_PIDFILE   file where the fake writes its pid at startup
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const scenario = process.env.FAKE_CSWAP_SCENARIO || 'default';
+if (process.env.FAKE_CSWAP_PIDFILE) fs.writeFileSync(process.env.FAKE_CSWAP_PIDFILE, String(process.pid));
+// Installed before anything else, so a cap that fires during startup still
+// meets the scenario's disposition and not Node's default one.
+if (scenario === 'slow' || scenario === 'stubborn') {
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => {
+      if (scenario === 'stubborn') return;
+      if (process.env.FAKE_CSWAP_MARKER) fs.writeFileSync(process.env.FAKE_CSWAP_MARKER, sig);
+      process.exit(130);
+    });
+  }
+  if (process.env.FAKE_CSWAP_MARKER) fs.writeFileSync(process.env.FAKE_CSWAP_MARKER, `ready ${process.pid}`);
+}
+const statePath = process.env.FAKE_CSWAP_STATE || path.join(os.tmpdir(), 'fake-cswap-state.json');
+const version = scenario === 'old' ? '0.19.2' : process.env.FAKE_CSWAP_VERSION || '0.27.0b1';
+
+const now = Date.now();
+// Real cswap mixes two formats: `resetsAt` is passed through from the usage
+// API (microseconds, "+00:00"); its own timestamps are whole seconds with "Z".
+const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+const apiTime = (ms) => new Date(ms).toISOString().replace(/\.(\d{3})Z$/, '.$1417+00:00');
+const inH = (h) => now + h * 3_600_000;
+
+// countdown/clock as cswap's oauth.format_reset / reset_clock_string render
+// them: whole minutes, "Xm" under an hour, "Mon D HH:MM" when not today.
+function usageWindow(pct, resetMs) {
+  const d = new Date(resetMs);
+  const left = Math.max(0, Math.floor((resetMs - now) / 60_000));
+  const days = Math.floor(left / 1440);
+  const hours = Math.floor((left % 1440) / 60);
+  const mins = left % 60;
+  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const sameDay = d.toDateString() === new Date(now).toDateString();
+  return {
+    pct,
+    resetsAt: apiTime(resetMs),
+    countdown: days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${mins}m` : `${mins}m`,
+    clock: sameDay ? hhmm : `${d.toLocaleString('en-US', { month: 'short' })} ${d.getDate()} ${hhmm}`,
+  };
+}
+
+function usage(fivePct, sevenPct, extra = {}) {
+  return {
+    fiveHour: usageWindow(fivePct, inH(2.2)),
+    sevenDay: { ...usageWindow(sevenPct, inH(76)), expectedPct: 55.0, aheadOfPace: sevenPct > 55 },
+    ...extra,
+  };
+}
+
+function rolledOver(u) {
+  return { ...u, fiveHour: usageWindow(u.fiveHour.pct, now - 60_000) };
+}
+
+const personal = (email) => ({ organizationName: `${email}'s Organization`, organizationUuid: `org-${email.split('@')[0]}` });
+
+// 20 / 80 / 95 %, one expired token (stale last-good data), one disabled.
+// Carol's measurement is 9 min old but still served as current, as cswap
+// does for accounts it polls on the slower candidate cadence.
+const ACCOUNTS = [
+  { number: 1, email: 'alice@example.com', alias: 'work', organizationName: 'Acme Corp', organizationUuid: 'org-acme', usage: usage(20, 34) },
+  { number: 2, email: 'bob@example.com', ...personal('bob@example.com'), usage: usage(80, 61) },
+  {
+    number: 3,
+    email: 'carol@example.com',
+    organizationName: 'Globex',
+    organizationUuid: 'org-globex',
+    usage: usage(95, 88, { spend: { used: 12.4, limit: 50, pct: 24.8, currency: 'USD' } }),
+    usageAgeSeconds: 540,
+  },
+  { number: 4, email: 'dave@example.com', ...personal('dave@example.com'), usageStatus: 'token_expired', lastGoodUsage: usage(42, 50), lastGoodAgeSeconds: 5400 },
+  { number: 5, email: 'erin@example.com', ...personal('erin@example.com'), disabled: true, usage: usage(5, 12) },
+];
+
+function readActive() {
+  try {
+    return JSON.parse(fs.readFileSync(statePath, 'utf8')).active ?? 1;
+  } catch {
+    return 1;
+  }
+}
+
+function writeActive(n) {
+  fs.writeFileSync(statePath, JSON.stringify({ active: n }));
+}
+
+function row(a, active) {
+  const r = {
+    number: a.number,
+    email: a.email,
+    organizationName: a.organizationName,
+    organizationUuid: a.organizationUuid,
+    isOrganization: Boolean(a.organizationUuid),
+    active: a.number === active,
+    usageStatus: a.usageStatus || 'ok',
+    usage: a.usage || null,
+  };
+  if (a.alias) r.alias = a.alias;
+  if (a.disabled) r.disabled = true;
+  if (r.usage) {
+    const age = a.usageAgeSeconds ?? 30.1;
+    r.usageFetchedAt = iso(now - age * 1000);
+    r.usageAgeSeconds = age;
+  } else if (a.lastGoodUsage) {
+    r.lastGoodUsage = a.lastGoodUsage;
+    r.lastGoodFetchedAt = iso(now - a.lastGoodAgeSeconds * 1000);
+    r.lastGoodAgeSeconds = a.lastGoodAgeSeconds;
+  }
+  r.someFutureField = 'ignored by consumers'; // the contract is additive
+  return r;
+}
+
+const ref = (a) => ({ number: a.number, email: a.email });
+
+// cswap prints `json.dumps(payload, indent=2)`.
+function out(obj, code = 0) {
+  process.stdout.write(JSON.stringify(obj, null, 2) + '\n');
+  process.exit(code);
+}
+
+function fail(type, message, code = 1) {
+  out({ schemaVersion: 1, error: { type, message } }, code);
+}
+
+function headroom(a) {
+  const u = a.usage;
+  if (!u) return -1;
+  return 100 - Math.max(u.fiveHour?.pct ?? 0, u.sevenDay?.pct ?? 0);
+}
+
+function switchResult(fromA, toA, strategy) {
+  const switched = fromA.number !== toA.number;
+  if (switched) writeActive(toA.number);
+  out({
+    schemaVersion: 1,
+    switched,
+    from: ref(fromA),
+    to: ref(toA),
+    strategy,
+    reason: switched ? 'switched' : strategy === 'best' ? 'already-best' : 'already-active',
+    message: switched
+      ? `Switched to Account-${toA.number} (${toA.email})`
+      : `Already on Account-${toA.number} (${toA.email})`,
+    warnings: [],
+  });
+}
+
+function main(argv) {
+  if (argv.includes('--version')) {
+    process.stdout.write(`cswap ${version}\n`);
+    return;
+  }
+  if (scenario === 'root') {
+    process.stderr.write('Error: cswap must not be run as root.\n');
+    process.exit(1);
+  }
+  if (scenario === 'garbage') {
+    process.stdout.write('Traceback (most recent call last):\n  oops\n');
+    process.exit(0);
+  }
+  if (scenario === 'slow') {
+    setTimeout(() => out({ schemaVersion: 1, accounts: [] }), 60_000);
+    return;
+  }
+  if (scenario === 'stubborn') {
+    setInterval(() => {}, 1000);
+    return;
+  }
+  if (scenario === 'flood') {
+    process.stdout.write('x'.repeat(9 * 1024 * 1024), () => process.exit(0));
+    return;
+  }
+  if (scenario === 'crash') {
+    process.kill(process.pid, 'SIGKILL');
+    return;
+  }
+  if (!argv.includes('--json')) {
+    process.stderr.write('fake-cswap only speaks --json\n');
+    process.exit(2);
+  }
+  const schemaVersion = scenario === 'schema2' ? 2 : 1;
+  const accounts = scenario === 'empty' ? [] : scenario === 'rolled' ? ACCOUNTS.map((a) => (a.number === 1 ? { ...a, usage: rolledOver(a.usage) } : a)) : ACCOUNTS;
+  const active = readActive();
+  const activeAcc = accounts.find((a) => a.number === active) || null;
+  const [cmd, ...rest] = argv.filter((a) => a !== '--json');
+
+  // Like cswap 0.26: an empty install lists as `accounts: []` (exit 0);
+  // only switch raises the ConfigError.
+  if (cmd === 'list' || cmd === 'ls') {
+    out({ schemaVersion, activeAccountNumber: activeAcc ? active : null, accounts: accounts.map((a) => row(a, active)) });
+  }
+  if (cmd === 'status') {
+    out({ schemaVersion, active: activeAcc ? row(activeAcc, active) : null });
+  }
+  if (cmd === 'switch') {
+    if (!accounts.length) fail('ConfigError', 'No accounts are managed yet');
+    const si = rest.indexOf('--strategy');
+    if (si !== -1) {
+      const strategy = rest[si + 1];
+      const pool = accounts.filter((a) => !a.disabled && a.usage);
+      if (strategy === 'best') {
+        const best = [...pool].sort((x, y) => headroom(y) - headroom(x))[0];
+        return switchResult(activeAcc, best, 'best');
+      }
+      if (strategy === 'next-available') {
+        const order = [...pool.filter((a) => a.number > active), ...pool.filter((a) => a.number <= active)];
+        const next = order.find((a) => headroom(a) > 0 && a.number !== active);
+        if (!next) {
+          out({
+            schemaVersion: 1,
+            switched: false,
+            from: ref(activeAcc),
+            to: ref(activeAcc),
+            strategy,
+            reason: 'candidates-exhausted',
+            message: 'Every other account is at its limit.',
+            warnings: [],
+          });
+        }
+        return switchResult(activeAcc, next, strategy);
+      }
+      process.stderr.write(`argument --strategy: invalid choice: '${strategy}'\n`);
+      process.exit(2);
+    }
+    const target = rest[0];
+    const toA = accounts.find((a) => String(a.number) === target || a.email === target);
+    if (!toA) {
+      fail('AccountNotFoundError', /^\d+$/.test(target) ? `Account-${target} does not exist` : `No account found with identifier: ${target}`);
+    }
+    return switchResult(activeAcc, toA, 'direct');
+  }
+  fail('ValidationError', `Unsupported command in fake-cswap: ${cmd}`, 2);
+}
+
+main(process.argv.slice(2));

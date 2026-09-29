@@ -1,0 +1,62 @@
+{
+  "name": "claude-swap-widget",
+  "productName": "Claude Swap Widget",
+  "version": "0.1.0",
+  "description": "Menu bar widget for claude-swap: usage rings per Claude Code account and one-click switching",
+  "main": "main.js",
+  "author": "claude-swap-widget contributors",
+  "license": "MIT",
+  "homepage": "https://github.com/Btvmn/claude-swap-widget#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Btvmn/claude-swap-widget.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Btvmn/claude-swap-widget/issues"
+  },
+  "scripts": {
+    "start": "node scripts/start.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "dist": "electron-builder --mac dmg --arm64",
+    "icon": "node scripts/make-icon.js"
+  },
+  "build": {
+    "appId": "io.github.btvmn.claude-swap-widget",
+    "productName": "Claude Swap Widget",
+    "copyright": "Copyright © 2026 claude-swap-widget contributors",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "src/**/*",
+      "package.json",
+      "LICENSE"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "LSUIElement": true
+      }
+    },
+    "dmg": {
+      "title": "${productName} ${version}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
+  }
+}
