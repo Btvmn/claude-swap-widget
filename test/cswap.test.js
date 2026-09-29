@@ -19,6 +19,8 @@ const {
   MIN_VERSION,
   DEFAULT_TIMEOUTS,
   runProcess,
+  parsePlain,
+  cswapLogPath,
 } = require('../src/cswap');
 
 // Polls until the pid is gone (a killed orphan stays visible until it is reaped).
@@ -158,6 +160,23 @@ test('parseResult', async (t) => {
   });
 });
 
+test('parsePlain: commands without --json', () => {
+  assert.deepEqual(parsePlain({ code: 0, stdout: 'Disabled Account-3 (c@x).\n', stderr: '' }), { stdout: 'Disabled Account-3 (c@x).\n' });
+  assert.throws(() => parsePlain({ code: 1, stdout: '', stderr: 'Error: Account-9 does not exist\n' }), { kind: 'cli', message: 'Account-9 does not exist', exitCode: 1 });
+  assert.throws(() => parsePlain({ code: 2, stdout: '', stderr: '' }), { kind: 'cli', message: 'cswap exited with code 2' });
+  assert.throws(() => parsePlain({ code: null, stdout: '', stderr: '', timedOut: true }), { kind: 'timeout' });
+  assert.throws(() => parsePlain({ code: null, stdout: '', stderr: '', spawnError: 'ENOENT' }), { kind: 'not-installed' });
+});
+
+test('cswapLogPath', () => {
+  assert.equal(cswapLogPath({ platform: 'darwin', env: {}, home: '/Users/u' }), '/Users/u/.claude-swap-backup/claude-swap.log');
+  assert.equal(cswapLogPath({ platform: 'linux', env: {}, home: '/home/u' }), '/home/u/.local/share/claude-swap/claude-swap.log');
+  assert.equal(cswapLogPath({ platform: 'linux', env: { XDG_DATA_HOME: '/data' }, home: '/home/u' }), '/data/claude-swap/claude-swap.log');
+  assert.equal(cswapLogPath({ platform: 'linux', env: { XDG_DATA_HOME: '~/d' }, home: '/home/u' }), '/home/u/d/claude-swap/claude-swap.log');
+  // a relative XDG_DATA_HOME is ignored, as the XDG spec says
+  assert.equal(cswapLogPath({ platform: 'linux', env: { XDG_DATA_HOME: 'rel' }, home: '/home/u' }), '/home/u/.local/share/claude-swap/claude-swap.log');
+});
+
 test('isNoAccounts', () => {
   assert.equal(isNoAccounts(new CswapError('cli', 'No accounts are managed yet', { errorType: 'ConfigError' })), true);
   assert.equal(isNoAccounts(new CswapError('cli', "Email 'a@b.c' is ambiguous", { errorType: 'ConfigError' })), false);
@@ -216,6 +235,7 @@ test('Cswap with a stubbed runner', async (t) => {
     await c.switchTo('bob@example.com');
     await c.switchTo({ strategy: 'best' });
     await c.switchTo({ strategy: 'next-available' });
+    await c.switchTo({ strategy: 'rotate' });
     await c.list();
     await c.status();
     assert.deepEqual(calls, [
@@ -223,6 +243,7 @@ test('Cswap with a stubbed runner', async (t) => {
       ['switch', 'bob@example.com', '--json'],
       ['switch', '--strategy', 'best', '--json'],
       ['switch', '--strategy', 'next-available', '--json'],
+      ['switch', '--json'],
       ['list', '--json'],
       ['status', '--json'],
     ]);
@@ -292,6 +313,32 @@ test('Cswap against the fake cswap binary', async (t) => {
     // Real cswap says 'usage-unavailable' for this roster (dave's usage is
     // unknown); the fake's simpler rule says 'already-best'. Either way: no switch.
     assert.equal(stay.to.number, 1);
+  });
+  await t.test('rotate goes to the next account in sequence and skips disabled ones', async () => {
+    use('default', 4);
+    // erin (5) is disabled in the roster, so from 4 the rotation wraps to 1
+    const r = await cswap.switchTo({ strategy: 'rotate' });
+    assert.equal(r.strategy, 'rotation');
+    assert.deepEqual([r.from.number, r.to.number], [4, 1]);
+  });
+  await t.test('disable and enable persist and are reflected in list()', async () => {
+    use('default', 1);
+    await cswap.setDisabled(3, true);
+    let rows = (await cswap.list()).accounts;
+    assert.equal(rows.find((a) => a.number === 3).disabled, true);
+    // rotation from 2 now skips 3
+    fs.writeFileSync(process.env.FAKE_CSWAP_STATE, JSON.stringify({ ...JSON.parse(fs.readFileSync(process.env.FAKE_CSWAP_STATE, 'utf8')), active: 2 }));
+    assert.equal((await cswap.switchTo({ strategy: 'rotate' })).to.number, 4);
+    await cswap.setDisabled(3, false);
+    rows = (await cswap.list()).accounts;
+    assert.equal(rows.find((a) => a.number === 3).disabled, undefined);
+    // idempotent, like cswap ("is already enabled", exit 0)
+    await cswap.setDisabled(3, false);
+  });
+  await t.test('disable of an unknown account is the stderr message', async () => {
+    use('default');
+    await assert.rejects(cswap.setDisabled(9, true), { kind: 'cli', message: 'Account-9 does not exist' });
+    await assert.rejects(cswap.setDisabled('--all', true), { kind: 'cli', message: /Invalid account/ });
   });
   await t.test('an unknown account is AccountNotFoundError from the envelope', async () => {
     use('default');

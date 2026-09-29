@@ -10,7 +10,8 @@
 //   FAKE_CSWAP_SCENARIO  default | empty | root | garbage | slow | schema2 | old | flood | crash
 //                        | stubborn (hangs and ignores SIGINT/SIGTERM)
 //                        | rolled (account 1's 5h window reset a minute ago)
-//   FAKE_CSWAP_STATE     file that remembers the active account (switch persists)
+//   FAKE_CSWAP_STATE     file that remembers the active account and the disabled
+//                        ones (switch, disable and enable persist)
 //   FAKE_CSWAP_VERSION   what `--version` prints (default 0.27.0b1)
 //   FAKE_CSWAP_MARKER    file where the 'slow' scenario writes the signal that stopped it
 //   FAKE_CSWAP_PIDFILE   file where the fake writes its pid at startup
@@ -86,24 +87,32 @@ const ACCOUNTS = [
     email: 'carol@example.com',
     organizationName: 'Globex',
     organizationUuid: 'org-globex',
-    usage: usage(95, 88, { spend: { used: 12.4, limit: 50, pct: 24.8, currency: 'USD' } }),
+    usage: usage(95, 88, {
+      spend: { used: 12.4, limit: 50, pct: 24.8, currency: 'USD' },
+      scoped: [{ ...usageWindow(76, inH(76)), expectedPct: 55.0, aheadOfPace: true, name: 'Fable' }],
+    }),
     usageAgeSeconds: 540,
   },
   { number: 4, email: 'dave@example.com', ...personal('dave@example.com'), usageStatus: 'token_expired', lastGoodUsage: usage(42, 50), lastGoodAgeSeconds: 5400 },
   { number: 5, email: 'erin@example.com', ...personal('erin@example.com'), disabled: true, usage: usage(5, 12) },
 ];
 
-function readActive() {
+// State: { active, disabled: [numbers] }. Without a `disabled` key the
+// roster's own flags apply (erin), so older state files keep working.
+function readState() {
   try {
-    return JSON.parse(fs.readFileSync(statePath, 'utf8')).active ?? 1;
+    const s = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    return { active: s.active ?? 1, disabled: Array.isArray(s.disabled) ? s.disabled : null };
   } catch {
-    return 1;
+    return { active: 1, disabled: null };
   }
 }
 
-function writeActive(n) {
-  fs.writeFileSync(statePath, JSON.stringify({ active: n }));
+function writeState(patch) {
+  fs.writeFileSync(statePath, JSON.stringify({ ...readState(), ...patch }));
 }
+
+const writeActive = (n) => writeState({ active: n });
 
 function row(a, active) {
   const r = {
@@ -152,6 +161,18 @@ function headroom(a) {
 function switchResult(fromA, toA, strategy) {
   const switched = fromA.number !== toA.number;
   if (switched) writeActive(toA.number);
+  if (!switched && strategy === 'rotation') {
+    out({
+      schemaVersion: 1,
+      switched: false,
+      from: ref(fromA),
+      to: ref(fromA),
+      strategy,
+      reason: 'only-one-account',
+      message: 'Only one account is managed. Add more accounts to switch between.',
+      warnings: [],
+    });
+  }
   out({
     schemaVersion: 1,
     switched,
@@ -195,13 +216,40 @@ function main(argv) {
     process.kill(process.pid, 'SIGKILL');
     return;
   }
+  const schemaVersion = scenario === 'schema2' ? 2 : 1;
+  const state = readState();
+  const roster = scenario === 'empty' ? [] : scenario === 'rolled' ? ACCOUNTS.map((a) => (a.number === 1 ? { ...a, usage: rolledOver(a.usage) } : a)) : ACCOUNTS;
+  const accounts = state.disabled ? roster.map((a) => ({ ...a, disabled: state.disabled.includes(a.number) })) : roster;
+  const active = state.active;
+
+  // disable / enable have no --json in cswap: text on stdout, "Error: …" on
+  // stderr with exit 1.
+  if (argv[0] === 'disable' || argv[0] === 'enable') {
+    const disabled = argv[0] === 'disable';
+    const target = argv[1];
+    if (!accounts.length) {
+      process.stderr.write('Error: No accounts are managed yet\n');
+      process.exit(1);
+    }
+    const acc = accounts.find((a) => String(a.number) === target || a.email === target);
+    if (!acc) {
+      process.stderr.write(`Error: ${/^\d+$/.test(target || '') ? `Account-${target} does not exist` : `No account found with identifier: ${target}`}\n`);
+      process.exit(1);
+    }
+    const verb = disabled ? 'disabled' : 'enabled';
+    if (Boolean(acc.disabled) === disabled) {
+      process.stdout.write(`Account-${acc.number} (${acc.email}) is already ${verb}.\n`);
+      process.exit(0);
+    }
+    const now = accounts.filter((a) => a.disabled).map((a) => a.number).filter((n) => n !== acc.number);
+    writeState({ disabled: disabled ? [...now, acc.number] : now });
+    process.stdout.write(`${verb[0].toUpperCase()}${verb.slice(1)} Account-${acc.number} (${acc.email}).\n`);
+    process.exit(0);
+  }
   if (!argv.includes('--json')) {
-    process.stderr.write('fake-cswap only speaks --json\n');
+    process.stderr.write('fake-cswap only speaks --json (and disable/enable)\n');
     process.exit(2);
   }
-  const schemaVersion = scenario === 'schema2' ? 2 : 1;
-  const accounts = scenario === 'empty' ? [] : scenario === 'rolled' ? ACCOUNTS.map((a) => (a.number === 1 ? { ...a, usage: rolledOver(a.usage) } : a)) : ACCOUNTS;
-  const active = readActive();
   const activeAcc = accounts.find((a) => a.number === active) || null;
   const [cmd, ...rest] = argv.filter((a) => a !== '--json');
 
@@ -244,6 +292,12 @@ function main(argv) {
       process.exit(2);
     }
     const target = rest[0];
+    // Bare `switch`: rotate to the next account in sequence, skipping disabled ones.
+    if (target === undefined) {
+      const pool = accounts.filter((a) => !a.disabled || a.number === active);
+      const order = [...pool.filter((a) => a.number > active), ...pool.filter((a) => a.number < active)];
+      return switchResult(activeAcc, order[0] || activeAcc, 'rotation');
+    }
     const toA = accounts.find((a) => String(a.number) === target || a.email === target);
     if (!toA) {
       fail('AccountNotFoundError', /^\d+$/.test(target) ? `Account-${target} does not exist` : `No account found with identifier: ${target}`);

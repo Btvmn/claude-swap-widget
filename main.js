@@ -11,10 +11,10 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, nativeTheme, scree
 const fs = require('fs');
 const path = require('path');
 const { AccountService } = require('./src/service');
-const { loadSettings, saveSettings, THEMES } = require('./src/settings');
-const { trayInfo } = require('./src/shared/usage');
+const { loadSettings, saveSettings, THEMES, TITLE_MODES, REFRESH_CHOICES } = require('./src/settings');
+const { trayInfo, menuLabel } = require('./src/shared/usage');
 const { trayImage } = require('./src/tray-icon');
-const { isExecutable } = require('./src/cswap');
+const { isExecutable, cswapLogPath } = require('./src/cswap');
 
 const WIDTH = 360;
 const MIN_HEIGHT = 160;
@@ -127,7 +127,7 @@ function createTray() {
 
 function updateTray(state) {
   if (!tray || tray.isDestroyed()) return;
-  const info = trayInfo(state);
+  const info = trayInfo(state, Date.now(), { mode: settings.titleMode, showName: settings.showName });
   tray.setImage(trayImage(nativeImage, info.pct, info.level));
   if (process.platform === 'darwin') {
     tray.setTitle(info.title ? ` ${info.title}` : '', { fontType: 'monospacedDigit' });
@@ -135,44 +135,171 @@ function updateTray(state) {
   tray.setToolTip(info.tooltip);
 }
 
+const TITLE_LABELS = { '5h': 'Session (5h)', '7d': 'Weekly (7d)', both: 'Both (5h · 7d)', max: 'Highest', off: 'None' };
+const REFRESH_LABELS = { 30: '30 seconds', 60: '1 minute', 120: '2 minutes', 300: '5 minutes' };
+
+// The same menu serves the tray's right click and the popover's "⋯" button.
+// Layout follows claude-swap's own menu bar app, so both feel alike.
 function buildMenu() {
-  const theme = nativeTheme.themeSource;
-  const login = app.getLoginItemSettings();
+  const state = service.state;
+  const accounts = state.phase === 'ok' ? state.accounts : [];
+  const identity = (a) => ({ email: a.email, organizationUuid: a.organizationUuid || '' });
+  const now = Date.now();
+  const busy = Boolean(state.switching);
+  const switchable = accounts.filter((a) => !a.disabled).length > 1;
+
+  const accountItems = accounts.map((a) => ({
+    label: menuLabel(a, now),
+    type: 'checkbox',
+    checked: Boolean(a.active),
+    enabled: !busy,
+    // An explicit switch works for disabled accounts too (they only leave auto-rotation).
+    click: () => (a.active ? updateTray(service.state) : runAction(() => service.switchTo(identity(a)), 'switch')),
+  }));
+
   return Menu.buildFromTemplate([
-    { label: 'Refresh Now', click: () => service.refresh() },
+    ...accountItems,
+    ...(accountItems.length ? [{ type: 'separator' }] : []),
+    { label: 'Switch to Next', enabled: switchable && !busy, click: () => runAction(() => service.switchTo({ strategy: 'rotate' }), 'switch') },
+    { label: 'Switch to Best', enabled: switchable && !busy, click: () => runAction(() => service.switchTo({ strategy: 'best' }), 'switch') },
+    {
+      label: 'Next Available',
+      enabled: switchable && !busy,
+      click: () => runAction(() => service.switchTo({ strategy: 'next-available' }), 'switch'),
+    },
     { type: 'separator' },
     {
-      label: 'Appearance',
-      submenu: THEMES.map((t) => ({
-        label: t[0].toUpperCase() + t.slice(1),
-        type: 'radio',
-        checked: theme === t,
-        click: () => setTheme(t),
+      label: 'Disable / Enable Account',
+      enabled: accounts.length > 0,
+      submenu: accounts.map((a) => ({
+        label: `${a.number}  ${a.alias || a.email}`,
+        type: 'checkbox',
+        // Ticked = in rotation, as in claude-swap's own menu.
+        checked: !a.disabled,
+        click: () => runAction(() => service.setDisabled(identity(a), !a.disabled), a.disabled ? 'enable' : 'disable'),
       })),
     },
+    { label: 'Add Account…', click: () => showCommand('Add an account', 'Log in to Claude Code with the account, then run this in Terminal:', 'cswap add') },
     {
-      // Unpackaged, this would register the bare Electron binary as the login item.
-      label: 'Open at Login',
-      type: 'checkbox',
-      visible: process.platform !== 'linux' && app.isPackaged,
-      checked: login.openAtLogin || login.status === 'requires-approval',
-      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
+      label: 'Remove Account',
+      enabled: accounts.length > 0,
+      submenu: accounts.map((a) => ({
+        label: `${a.number}  ${a.alias || a.email}…`,
+        click: () =>
+          showCommand(
+            `Remove Account-${a.number}`,
+            `claude-swap asks for confirmation before it forgets ${a.email}. Run this in Terminal:`,
+            `cswap remove ${a.number}`,
+          ),
+      })),
     },
+    { label: 'Open cswap Log', click: () => openCswapLog() },
     { type: 'separator' },
-    { label: 'Choose cswap Binary…', click: () => chooseBinary() },
     {
-      label: 'Use cswap from PATH',
-      visible: Boolean(settings.cswapPath),
-      click: () => setCswapPath(null),
+      label: 'Settings',
+      submenu: [
+        { label: 'Show Account Name in Menu Bar', type: 'checkbox', checked: settings.showName, click: (item) => saveAndApply({ showName: item.checked }) },
+        {
+          label: 'Menu Bar Percentage',
+          submenu: TITLE_MODES.map((m) => ({ label: TITLE_LABELS[m], type: 'radio', checked: settings.titleMode === m, click: () => saveAndApply({ titleMode: m }) })),
+        },
+        {
+          label: 'Refresh Every',
+          submenu: REFRESH_CHOICES.map((sec) => ({
+            label: REFRESH_LABELS[sec],
+            type: 'radio',
+            checked: settings.refreshSeconds === sec,
+            click: () => saveAndApply({ refreshSeconds: sec }),
+          })),
+        },
+        {
+          label: 'Appearance',
+          submenu: THEMES.map((t) => ({ label: t[0].toUpperCase() + t.slice(1), type: 'radio', checked: nativeTheme.themeSource === t, click: () => setTheme(t) })),
+        },
+        {
+          // Unpackaged, this would register the bare Electron binary as the login item.
+          label: 'Open at Login',
+          type: 'checkbox',
+          visible: process.platform !== 'linux' && app.isPackaged,
+          checked: loginChecked(),
+          click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
+        },
+        { type: 'separator' },
+        { label: 'Choose cswap Binary…', click: () => chooseBinary() },
+        { label: 'Use cswap from PATH', visible: Boolean(settings.cswapPath), click: () => setCswapPath(null) },
+      ],
     },
-    { type: 'separator' },
+    { label: 'Refresh Now', click: () => service.refresh() },
     { label: 'Quit', role: 'quit' },
   ]);
+}
+
+function loginChecked() {
+  const login = app.getLoginItemSettings();
+  return login.openAtLogin || login.status === 'requires-approval';
+}
+
+function saveAndApply(patch) {
+  const before = settings.refreshSeconds;
+  settings = saveSettings(app.getPath('userData'), { ...settings, ...patch });
+  if (settings.refreshSeconds !== before) restartTimer();
+  updateTray(service.state);
 }
 
 function setTheme(theme) {
   nativeTheme.themeSource = theme;
   settings = saveSettings(app.getPath('userData'), { ...settings, theme });
+}
+
+// Menu actions report back through a toast in the popover; when the popover
+// is hidden, a failure gets a dialog so it is not lost. Successes need no
+// dialog: the tray title already shows the new state.
+async function runAction(fn, what) {
+  try {
+    const result = await fn();
+    if (what === 'switch' && result) {
+      toast(result.switched ? `Switched to ${result.to && result.to.email}` : result.message || 'No switch needed');
+    } else if (what === 'disable' || what === 'enable') {
+      toast(what === 'disable' ? 'Held out of auto-rotation' : 'Back in the rotation');
+    }
+    return result;
+  } catch (err) {
+    toast(err.message, true);
+    if (!popoverAlive() || !win.isVisible()) {
+      dialog.showMessageBox({ type: 'error', message: 'claude-swap could not do that', detail: err.message });
+    }
+    return null;
+  }
+}
+
+function toast(text, error = false) {
+  if (popoverAlive()) win.webContents.send('ui:toast', { text: String(text || ''), error: Boolean(error) });
+}
+
+// Add and remove stay in claude-swap's hands: they can prompt, and remove
+// cannot be undone. We show the command and offer to copy it.
+async function showCommand(title, detail, command) {
+  keepOpen = true;
+  try {
+    const r = await dialog.showMessageBox({
+      type: 'info',
+      message: title,
+      detail: `${detail}\n\n    ${command}`,
+      buttons: ['Copy Command', 'Close'],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (r.response === 0) clipboard.writeText(command);
+  } finally {
+    keepOpen = false;
+  }
+}
+
+function openCswapLog() {
+  const file = cswapLogPath();
+  if (fs.existsSync(file)) shell.showItemInFolder(file);
+  else if (fs.existsSync(path.dirname(file))) shell.openPath(path.dirname(file));
+  else dialog.showMessageBox({ type: 'info', message: 'No claude-swap log yet', detail: file });
 }
 
 function restartTimer() {
@@ -348,7 +475,7 @@ async function setCswapPath(p) {
 // current slot number up again right before switching).
 function switchTarget(t) {
   if (!t || typeof t !== 'object') return null;
-  if (['best', 'next-available'].includes(t.strategy)) return { strategy: t.strategy };
+  if (['rotate', 'best', 'next-available'].includes(t.strategy)) return { strategy: t.strategy };
   if (typeof t.email === 'string' && t.email && (t.organizationUuid == null || typeof t.organizationUuid === 'string')) {
     return { email: t.email, organizationUuid: t.organizationUuid || '' };
   }
@@ -369,6 +496,17 @@ function registerIpc() {
     try {
       const result = await service.switchTo(t);
       return { ok: true, result };
+    } catch (err) {
+      return { ok: false, error: { kind: err.kind || 'unknown', message: err.message, errorType: err.errorType } };
+    }
+  });
+  ipcMain.handle('accounts:set-disabled', async (e, target, disabled) => {
+    if (!fromPopover(e)) return null;
+    const t = switchTarget(target);
+    if (!t || t.strategy || typeof disabled !== 'boolean') return { ok: false, error: { kind: 'invalid', message: 'Invalid account' } };
+    try {
+      await service.setDisabled(t, disabled);
+      return { ok: true };
     } catch (err) {
       return { ok: false, error: { kind: err.kind || 'unknown', message: err.message, errorType: err.errorType } };
     }

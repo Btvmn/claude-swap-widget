@@ -140,7 +140,15 @@ test('trayInfo does not pass off outdated numbers as current', () => {
 test('settings sanitize, load and save', () => {
   assert.deepEqual(sanitize(null), DEFAULTS);
   assert.deepEqual(sanitize({ theme: 'neon', refreshSeconds: 5, cswapPath: '  ', extra: 1 }), { ...DEFAULTS, refreshSeconds: 30 });
-  assert.deepEqual(sanitize({ theme: 'dark', refreshSeconds: 90, cswapPath: '/x/cswap' }), { cswapPath: '/x/cswap', theme: 'dark', refreshSeconds: 90 });
+  assert.deepEqual(sanitize({ theme: 'dark', refreshSeconds: 90, cswapPath: '/x/cswap', showName: true, titleMode: 'both' }), {
+    ...DEFAULTS,
+    cswapPath: '/x/cswap',
+    theme: 'dark',
+    refreshSeconds: 90,
+    showName: true,
+    titleMode: 'both',
+  });
+  assert.deepEqual(sanitize({ showName: 'yes', titleMode: 'everything' }), DEFAULTS);
   // above setInterval's 32-bit limit the delay would collapse to 1 ms
   assert.equal(sanitize({ refreshSeconds: 3_600_000 }).refreshSeconds, MAX_REFRESH_S);
   assert.equal(sanitize({ refreshSeconds: 1e300 }).refreshSeconds, MAX_REFRESH_S);
@@ -227,4 +235,52 @@ test('trayImage: template image only below amber; 1x and 2x representations', ()
     assert.ok(crit[2] > crit[0] && crit[1] < crit[2] / 2, `crit is red @${scale}x: ${[...crit]}`);
     assert.deepEqual([plain[0], plain[1], plain[2]], [0, 0, 0], `template ring stays black @${scale}x`);
   }
+});
+
+test('trayInfo title modes and the account name', () => {
+  const now = Date.parse('2026-09-29T12:00:00Z');
+  const later = '2026-09-29T15:00:00Z';
+  const state = {
+    phase: 'ok',
+    accounts: [{ active: true, email: 'alice@example.com', usage: { fiveHour: { pct: 20, resetsAt: later }, sevenDay: { pct: 81, resetsAt: later } } }],
+  };
+  const t = (opts) => U.trayInfo(state, now, opts);
+  assert.equal(t({ mode: '5h' }).title, '20%');
+  assert.equal(t({ mode: '5h' }).level, 'ok');
+  assert.equal(t({ mode: '7d' }).title, '81%');
+  assert.equal(t({ mode: '7d' }).pct, 81);
+  assert.equal(t({ mode: 'both' }).title, '20% · 81%');
+  assert.equal(t({ mode: 'both' }).pct, 20, 'the ring shows 5h');
+  assert.equal(t({ mode: 'both' }).level, 'warn', 'coloured by the highest shown');
+  assert.equal(t({ mode: 'max' }).title, '81%');
+  assert.equal(t({ mode: 'off' }).title, '');
+  assert.equal(t({ mode: '5h', showName: true }).title, 'alice 20%');
+  assert.equal(t({ mode: 'off', showName: true }).title, 'alice');
+  const aliased = { ...state, accounts: [{ ...state.accounts[0], alias: 'work' }] };
+  assert.equal(U.trayInfo(aliased, now, { showName: true }).title, 'work 20%');
+  // "?" once, at the end, when the data is doubtful
+  assert.equal(U.trayInfo({ ...state, error: { message: 'x' }, fetchedAt: '2026-09-29T11:00:00Z' }, now, { mode: 'both' }).title, '20% · 81%?');
+});
+
+test('pace: "7d ahead of pace" badge and menu labels', () => {
+  const now = Date.parse('2026-09-29T12:00:00Z');
+  const row = {
+    number: 1,
+    email: 'contact@example.com',
+    active: true,
+    usageStatus: 'ok',
+    usage: {
+      fiveHour: { pct: 100, resetsAt: '2026-09-29T14:47:00+00:00' },
+      sevenDay: { pct: 62, resetsAt: '2026-10-04T15:00:00+00:00', expectedPct: 48.2, aheadOfPace: true },
+      scoped: [{ name: 'Fable', pct: 76, resetsAt: '2026-10-04T15:00:00+00:00', aheadOfPace: true }],
+    },
+  };
+  const pace = U.badges(row).find((b) => b.key === 'pace');
+  assert.equal(pace.label, '7d ahead of pace');
+  assert.equal(pace.title, 'Used 62%; an even pace would be 48% by now');
+  assert.equal(U.badges({ ...row, usage: { ...row.usage, sevenDay: { pct: 30, aheadOfPace: false } } }).find((b) => b.key === 'pace'), undefined);
+  assert.equal(U.menuLabel(row, now), '1  contact@example.com  5h 100% (2h 47m) · 7d 62% (ahead) (5d 3h) · Fable 76% (ahead) (5d 3h)');
+  const off = { number: 5, email: 'e@x', disabled: true, usageStatus: 'token_expired', usage: null, lastGoodUsage: { fiveHour: { pct: 5, resetsAt: '2026-09-29T11:00:00Z' } } };
+  assert.equal(U.menuLabel(off, now), '5  e@x  5h reset  — disabled, token expired, stale');
+  assert.equal(U.shortName({ email: 'contact@example.com' }), 'contact');
 });

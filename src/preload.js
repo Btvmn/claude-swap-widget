@@ -8,8 +8,10 @@ contextBridge.exposeInMainWorld('api', {
   info: () => ipcRenderer.invoke('app:info'),
   getState: () => ipcRenderer.invoke('accounts:get'),
   refresh: () => ipcRenderer.invoke('accounts:refresh'),
-  // target: account number, or { strategy: 'best' | 'next-available' }
+  // target: { email, organizationUuid } of a listed account, or
+  // { strategy: 'rotate' | 'best' | 'next-available' }
   switchTo: (target) => ipcRenderer.invoke('accounts:switch', target),
+  setDisabled: (target, disabled) => ipcRenderer.invoke('accounts:set-disabled', target, disabled),
   recheck: () => ipcRenderer.invoke('app:recheck'),
   chooseBinary: () => ipcRenderer.invoke('app:choose-binary'),
   usePath: () => ipcRenderer.invoke('app:use-path'),
@@ -17,6 +19,11 @@ contextBridge.exposeInMainWorld('api', {
   openDocs: () => ipcRenderer.send('app:open-docs'),
   showMenu: () => ipcRenderer.send('app:menu'),
   resize: (height) => ipcRenderer.send('ui:resize', height),
+  onToast: (cb) => {
+    const listener = (_e, t) => cb(t);
+    ipcRenderer.on('ui:toast', listener);
+    return () => ipcRenderer.removeListener('ui:toast', listener);
+  },
   onState: (cb) => {
     const listener = (_e, state) => cb(state);
     ipcRenderer.on('accounts:state', listener);

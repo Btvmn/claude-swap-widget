@@ -14,9 +14,19 @@ It is **not** a fork of it.
 - A **separate repo** of its own, MIT licensed, crediting claude-swap in the README.
 - The app **never reads or writes credentials itself**. All account operations
   go through `cswap … --json`. Do not import or port claude-swap code.
-- Visual inspiration: TheMaestr-o/claude-usage-widget (a friend's project, MIT):
-  glass rings, amber at 75 %, red at 90 %. Do not copy its code or assets without
-  asking him and adding attribution. Write our own rings.
+  One exception (decided 2026-09-29): `cswap disable|enable <num>` have no `--json` and never
+  prompt, so they run plain; success is exit 0, failure is cswap's `Error: …` line on stderr.
+- Tray menu mirrors claude-swap's own menu bar app (accounts, Next, Best, Next available,
+  Disable/Enable, Settings). Add and Remove are NOT run by us (they can prompt; remove is
+  irreversible): we show the `cswap add` / `cswap remove N` command with a Copy button.
+  No auto-switch in the widget: claude-swap's own `cswap menubar` / `cswap auto` does that.
+  "Open cswap Log" only reveals `~/.claude-swap-backup/claude-swap.log`; we never parse it.
+- UI source: TheMaestr-o/claude-usage-widget, branch `maestro-edition` (MIT, © 2024 Slavomir
+  Durej; Maestro edition by The Maestro). Decided 2026-09-29: we may take its visual layer
+  (glass rings, statistics, menu-bar styles, widget window, i18n) — the author agreed. Keep
+  both copyright notices in LICENSE and credit both in README. Take the UI only: its data
+  layer (claude.ai login, `sessionKey` cookie, hidden-window fetch) is exactly what this app
+  must not do; data still comes from cswap. Amber at 75 %, red at 90 %.
 
 ## cswap JSON contract (checked against claude-swap 0.27.0b1 and 0.26.0)
 
@@ -24,7 +34,8 @@ It is **not** a fork of it.
   (no `cswap add` yet) answers `{activeAccountNumber: null, accounts: []}` with exit 0.
 - JSON goes to stdout as `json.dumps(payload, indent=2)`; nothing else is printed there.
 - `cswap status --json` → `{schemaVersion:1, active: row|null}`
-- `cswap switch <num|email> --json`, `cswap switch --strategy best|next-available --json`
+- `cswap switch <num|email> --json`, `cswap switch --strategy best|next-available --json`,
+  bare `cswap switch --json` = rotation to the next account (strategy `"rotation"`), skipping disabled ones
   → `{schemaVersion:1, switched, from, to, strategy, reason, message, warnings[]}`.
   `from`/`to` are `{number, email}`. `reason`: `switched`, `already-active`, `activated`,
   or a no-op reason (`already-best`, `candidates-exhausted`, `no-valid-target`,

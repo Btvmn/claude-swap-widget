@@ -457,6 +457,7 @@ document.addEventListener('visibilitychange', tick);
 (async function init() {
   const info = (await ipc.info()) || {};
   if (info.platform !== 'darwin' || info.capture) document.documentElement.classList.add('opaque');
+  ipc.onToast((t) => t && t.text && toast(t.text, t.error));
   ipc.onState((s) => {
     state = s;
     render();

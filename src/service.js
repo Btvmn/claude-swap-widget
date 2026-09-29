@@ -142,6 +142,23 @@ class AccountService extends EventEmitter {
     return row.number;
   }
 
+  // Hold an account out of automatic selection, or return it. Same identity
+  // lookup as a switch; the list is refreshed afterwards either way.
+  async setDisabled(target, disabled) {
+    try {
+      await this.enqueue(async () => {
+        if (!this.cswap && !(await this.connect())) {
+          throw new CswapError('not-installed', 'claude-swap is not available');
+        }
+        const number = await this.resolveAccount(target);
+        await this.cswap.setDisabled(number, disabled);
+        this.update({ accounts: this.state.accounts.map((a) => (a.number === number ? { ...a, disabled } : a)) });
+      });
+    } finally {
+      this.refresh();
+    }
+  }
+
   // Forget the binary and look for it again (after install, upgrade, or a new
   // override). The reset is queued like any call, so work already queued
   // still runs against the old binary instead of finding none.

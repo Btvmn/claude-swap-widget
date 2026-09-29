@@ -180,9 +180,11 @@ class Cswap {
     return this.json(['status'], this.timeouts.read);
   }
 
-  // target: account number, email, or { strategy: 'best' | 'next-available' }
+  // target: account number, email, or { strategy: 'rotate' | 'best' | 'next-available' }.
+  // 'rotate' is a bare `cswap switch`: the next account in sequence, skipping disabled ones.
   switchTo(target) {
     if (target && typeof target === 'object' && target.strategy) {
+      if (target.strategy === 'rotate') return this.json(['switch'], this.timeouts.switch);
       if (!['best', 'next-available'].includes(target.strategy)) {
         return Promise.reject(new CswapError('cli', `Unknown strategy ${target.strategy}`));
       }
@@ -194,6 +196,44 @@ class Cswap {
     }
     return this.json(['switch', t], this.timeouts.switch);
   }
+
+  // Hold an account out of automatic selection (rotation, best,
+  // next-available, auto-switch) or return it. `disable`/`enable` have no
+  // --json, so success is exit 0 and a failure is the "Error: …" line cswap
+  // prints to stderr. They never prompt.
+  setDisabled(number, disabled) {
+    const n = String(number ?? '');
+    if (!/^\d+$/.test(n)) return Promise.reject(new CswapError('cli', `Invalid account: ${n}`));
+    return this.plain([disabled ? 'disable' : 'enable', n], this.timeouts.read);
+  }
+
+  async plain(args, timeoutMs) {
+    return parsePlain(await this.run(this.binary, args, timeoutMs, this.timeouts.grace));
+  }
+}
+
+// For the few commands without --json: exit 0 is success; otherwise the last
+// stderr line (cswap prints "Error: <message>") is the message.
+function parsePlain(r) {
+  throwIfAbnormal(r);
+  if (r.timedOut && r.code !== 0) throw TIMEOUT();
+  if (r.code !== 0) {
+    const last = (r.stderr || '').trim().split('\n').filter(Boolean).pop() || '';
+    const msg = last.replace(/^Error:\s*/, '');
+    throw new CswapError('cli', msg || `cswap exited with code ${r.code}`, { exitCode: r.code });
+  }
+  return { stdout: r.stdout };
+}
+
+// Where cswap writes its log (paths.get_backup_root() + "claude-swap.log"):
+// ~/.claude-swap-backup on macOS and Windows, the XDG data dir on Linux.
+function cswapLogPath({ platform = process.platform, env = process.env, home = os.homedir() } = {}) {
+  let root = path.join(home, '.claude-swap-backup');
+  if (platform === 'linux') {
+    const xdg = (env.XDG_DATA_HOME || '').replace(/^~(?=$|\/)/, home);
+    root = xdg && path.isAbsolute(xdg) ? path.join(xdg, 'claude-swap') : path.join(home, '.local', 'share', 'claude-swap');
+  }
+  return path.join(root, 'claude-swap.log');
 }
 
 // Defensive: cswap 0.26/0.27 answer an empty `list --json` with
@@ -307,6 +347,8 @@ module.exports = {
   candidateDirs,
   compareVersions,
   parseResult,
+  parsePlain,
+  cswapLogPath,
   runProcess,
   isNoAccounts,
   isExecutable,

@@ -340,6 +340,19 @@ test('switch routing', async (t) => {
   });
 });
 
+test('setDisabled resolves the account by identity and refreshes', async (t) => {
+  pinFake(t);
+  const svc = new AccountService({ find: () => FAKE });
+  await svc.refresh();
+  await svc.setDisabled({ email: 'bob@example.com', organizationUuid: 'org-bob' }, true);
+  await svc.pending;
+  assert.equal(svc.state.accounts.find((a) => a.number === 2).disabled, true);
+  await svc.setDisabled({ email: 'bob@example.com', organizationUuid: 'org-bob' }, false);
+  await svc.pending;
+  assert.ok(!svc.state.accounts.find((a) => a.number === 2).disabled);
+  await assert.rejects(svc.setDisabled({ email: 'nobody@example.com', organizationUuid: '' }, true), { message: /no longer in claude-swap/ });
+});
+
 test('a switch by identity uses the slot number from a fresh list', async (t) => {
   const rows = (pairs) => ({
     schemaVersion: 1,

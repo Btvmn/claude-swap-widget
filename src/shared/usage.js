@@ -103,11 +103,54 @@
       const age = formatDuration(aged);
       out.push({ key: 'aged', label: `${age} ago`, tone: 'muted', title: `Measured ${age} ago; cswap re-measures each account on its own schedule` });
     }
+    const pace = paceNote(eff.usage && eff.usage.sevenDay);
+    if (pace) out.push({ key: 'pace', label: '7d ahead of pace', tone: 'warn', title: pace });
     return out;
+  }
+
+  // cswap's weekly pace: `aheadOfPace` when usage runs ahead of an even spread
+  // over the window. (Its exhaustion ETA is deliberately not shown: cswap
+  // keeps it out of human-facing output because the error bars are wide.)
+  function paceNote(window) {
+    if (!window || window.aheadOfPace !== true || typeof window.pct !== 'number') return '';
+    const expected = num(window.expectedPct);
+    return expected === null
+      ? `Used ${Math.round(window.pct)}% — faster than an even pace to the weekly reset`
+      : `Used ${Math.round(window.pct)}%; an even pace would be ${Math.round(expected)}% by now`;
   }
 
   function label(row) {
     return row.alias || row.email || `Account ${row.number}`;
+  }
+
+  // Short form for the menu bar: the alias, else the part of the email before "@".
+  function shortName(row) {
+    return row.alias || (row.email ? row.email.split('@')[0] : '') || `Account ${row.number}`;
+  }
+
+  // One line per account for the native menus, in claude-swap's own style:
+  // "1  work  5h 20% (2h 12m) · 7d 34% (ahead) (3d 4h) · Fable 76% (3d 4h)".
+  function menuLabel(row, now = Date.now()) {
+    const { usage, stale } = effectiveUsage(row);
+    const part = (name, w) => {
+      if (!w || typeof w.pct !== 'number') return null;
+      if (resetPassed(w, now)) return `${name} reset`;
+      const secs = secondsUntil(w.resetsAt, now);
+      const ahead = w.aheadOfPace === true ? ' (ahead)' : '';
+      return `${name} ${Math.round(w.pct)}%${ahead}${secs != null ? ` (${formatDuration(secs)})` : ''}`;
+    };
+    const windows = usage
+      ? [part('5h', usage.fiveHour), part('7d', usage.sevenDay), ...(Array.isArray(usage.scoped) ? usage.scoped : []).map((w) => part((w && w.name) || 'model', w))]
+      : [];
+    const notes = [];
+    if (row.disabled) notes.push('disabled');
+    if (row.usageStatus && row.usageStatus !== 'ok') {
+      const b = STATUS_BADGES[row.usageStatus];
+      notes.push((b ? b.label : String(row.usageStatus).replace(/_/g, ' ')).toLowerCase());
+    }
+    if (stale) notes.push('stale');
+    const usageText = windows.filter(Boolean).join(' · ');
+    return [`${row.number}  ${label(row)}`, usageText, notes.length ? `— ${notes.join(', ')}` : ''].filter(Boolean).join('  ');
   }
 
   // Personal accounts come with an auto-named org ("<email>'s Organization")
@@ -120,11 +163,14 @@
     return name;
   }
 
-  // Menu-bar summary: the active account's 5h usage. The tray is what people
-  // glance at without opening anything, so doubtful numbers say so: a "?"
-  // after the % when the list could not be refreshed or only last-good data
-  // is left, and no number at all once the 5h window has rolled over.
-  function trayInfo(state, now = Date.now()) {
+  // Menu-bar summary of the active account. `mode` picks the window(s) the
+  // title shows (5h | 7d | both | max | off, as in claude-swap's own menu);
+  // the ring shows the same window (5h for both/off) and is coloured by the
+  // highest percentage shown. The tray is what people glance at without
+  // opening anything, so doubtful numbers say so: a "?" when the list could
+  // not be refreshed or only last-good data is left, and no number at all
+  // for a window that has rolled over since it was measured.
+  function trayInfo(state, now = Date.now(), { mode = '5h', showName = false } = {}) {
     const phase = state && state.phase;
     if (!phase || phase === 'loading') return tray('', null, 'Claude accounts — loading…');
     if (phase === 'missing' || phase === 'too-old') return tray('!', null, 'claude-swap needs setup');
@@ -133,17 +179,19 @@
     const active = (state.accounts || []).find((a) => a.active);
     if (!active) return tray('–', null, 'No active account');
     const { usage, stale } = effectiveUsage(active);
-    const fiveWindow = usage && usage.fiveHour;
-    let five = num(fiveWindow && fiveWindow.pct);
-    const seven = num(usage && usage.sevenDay && usage.sevenDay.pct);
     const parts = [label(active)];
-    if (five !== null && resetPassed(fiveWindow, now)) {
-      five = null;
-      parts.push('5h window has reset, waiting for new data');
-    } else if (five !== null) {
-      parts.push(`5h ${Math.round(five)}%`);
-    }
-    if (seven !== null) parts.push(`7d ${Math.round(seven)}%`);
+    const read = (name, w) => {
+      const p = num(w && w.pct);
+      if (p === null) return null;
+      if (resetPassed(w, now)) {
+        parts.push(`${name} window has reset, waiting for new data`);
+        return null;
+      }
+      parts.push(`${name} ${Math.round(p)}%${w.aheadOfPace === true ? ' (ahead of pace)' : ''}`);
+      return p;
+    };
+    const five = read('5h', usage && usage.fiveHour);
+    const seven = read('7d', usage && usage.sevenDay);
     // phase 'ok' with an error: the last refresh failed and this list is older.
     const failing = Boolean(state.error);
     if (failing) {
@@ -153,8 +201,20 @@
     if (stale) parts.push('stale');
     const aged = agedSeconds(active);
     if (aged !== null) parts.push(`${formatDuration(aged)} old`);
-    const title = five === null ? '–' : `${Math.round(five)}%${failing || stale ? '?' : ''}`;
-    return tray(title, five, parts.join(' · '));
+
+    const highest = (...ps) => ps.filter((p) => p !== null).reduce((m, p) => (m === null || p > m ? p : m), null);
+    const pct = (p) => (p === null ? '–' : `${Math.round(p)}%`);
+    let text;
+    let ring;
+    let hot;
+    if (mode === '7d') [text, ring, hot] = [pct(seven), seven, seven];
+    else if (mode === 'both') [text, ring, hot] = [`${pct(five)} · ${pct(seven)}`, five, highest(five, seven)];
+    else if (mode === 'max') [text, ring, hot] = [pct(highest(five, seven)), highest(five, seven), highest(five, seven)];
+    else if (mode === 'off') [text, ring, hot] = ['', five, five];
+    else [text, ring, hot] = [pct(five), five, five];
+    if (text && /\d/.test(text) && (failing || stale)) text += '?';
+    const title = [showName ? shortName(active) : '', text].filter(Boolean).join(' ');
+    return { title, pct: ring, level: level(hot), tooltip: parts.join(' · ') };
   }
 
   function tray(title, pct, tooltip) {
@@ -171,8 +231,11 @@
     secondsUntil,
     resetPassed,
     agedSeconds,
+    paceNote,
     badges,
     label,
+    shortName,
+    menuLabel,
     orgLabel,
     trayInfo,
   };
