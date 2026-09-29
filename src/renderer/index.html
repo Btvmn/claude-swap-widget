@@ -7,32 +7,59 @@
       content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:"
     />
     <title>Claude accounts</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="css/tokens.css" />
+    <link rel="stylesheet" href="css/base.css" />
+    <link rel="stylesheet" href="css/window.css" />
+    <link rel="stylesheet" href="css/screens.css" />
+    <link rel="stylesheet" href="css/hero.css" />
+    <link rel="stylesheet" href="css/accounts.css" />
+    <link rel="stylesheet" href="css/stats.css" />
   </head>
   <body>
     <div id="app">
-      <header class="bar">
+      <header id="titlebar" class="titlebar">
         <div class="title">
-          <h1>Claude accounts</h1>
-          <p id="subtitle" class="muted"></p>
+          <h1 id="title" data-i18n="app.title">Claude accounts</h1>
+          <p id="subtitle"></p>
         </div>
-        <button id="refresh" class="icon-btn" type="button" title="Refresh" aria-label="Refresh">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.76-4.24M16 3.5V6.5h-3" /></svg>
+        <button id="stats-btn" class="icon-btn" type="button" aria-pressed="false" data-i18n-title="btn.graph">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
         </button>
-        <button id="menu" class="icon-btn" type="button" title="More" aria-label="More">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.5" cy="10" r="1.4" /><circle cx="10" cy="10" r="1.4" /><circle cx="15.5" cy="10" r="1.4" /></svg>
+        <button id="pin" class="icon-btn" type="button" aria-pressed="false" data-i18n-title="btn.pin">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6l-1 6 3 3H7l3-3-1-6z" /><path d="M12 13v7" /></svg>
+        </button>
+        <button id="refresh" class="icon-btn" type="button" data-i18n-title="btn.refresh">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" /><path d="M19.5 4.5v4h-4" /></svg>
+        </button>
+        <button id="menu" class="icon-btn" type="button" data-i18n-title="btn.more">
+          <svg class="solid" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="18.5" cy="12" r="1.7" /></svg>
         </button>
       </header>
       <div id="banner" class="banner" role="alert" hidden></div>
-      <main id="content"><div id="list"></div></main>
-      <footer id="footer" class="bar" hidden>
-        <button id="best" class="primary" type="button" title="Switch to the account with the most headroom (cswap switch --strategy best)">
-          Switch to best account
-        </button>
+      <main id="content">
+        <section id="screen" class="screen" hidden></section>
+        <section id="hero" class="hero" hidden></section>
+        <section id="accounts" class="accounts" hidden>
+          <div id="acctList" role="list" tabindex="-1"></div>
+        </section>
+        <section id="stats" class="stats-section" hidden></section>
+      </main>
+      <footer id="footer" class="footer" hidden>
+        <button id="best" class="primary" type="button" data-i18n="act.best" data-i18n-tip="act.bestTip">Switch to best account</button>
+        <button id="next" class="pill-btn" type="button" data-i18n="act.next" data-i18n-tip="act.nextTip">Next</button>
       </footer>
     </div>
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script src="../shared/i18n.js"></script>
     <script src="../shared/usage.js"></script>
-    <script src="renderer.js"></script>
+    <script src="../shared/stats.js"></script>
+    <script src="dom.js"></script>
+    <script src="i18n-dom.js"></script>
+    <script src="tray-picture.js"></script>
+    <script src="screens.js"></script>
+    <script src="hero.js"></script>
+    <script src="accounts.js"></script>
+    <script src="stats-view.js"></script>
+    <script src="app.js"></script>
   </body>
 </html>

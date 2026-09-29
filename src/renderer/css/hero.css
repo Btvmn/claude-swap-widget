@@ -1,0 +1,630 @@
+/*
+ * Adapted from Claude Usage Widget — The Maestro edition
+ * (github.com/TheMaestr-o/claude-usage-widget @ b79d4b1, src/renderer/styles.css:1819-1970,
+ * 2680-2700, 2815-2933).
+ * Copyright (c) 2024 Slavomir Durej; Maestro edition (c) 2026 The Maestro.
+ * MIT licence; see LICENSE, "Third-party code".
+ */
+
+/*
+ * The hero: the active account in their two rings, stacked for the 360 px
+ * popover (ring on top, then label, countdown, reset time). Colours come from
+ * tokens.css; the keyframes glow-warn / glow-danger live in base.css.
+ */
+
+.hero {
+  position: relative;
+  padding: 0 12px 10px;
+}
+
+/* The pills get a row only when there are any; the account's ⋯ floats in
+   the hero's top-right corner either way. */
+.hero-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 28px 0 4px;
+}
+
+.hero-status:not(.has-pills) .pills {
+  display: none;
+}
+
+.hero-status .pills {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 22px;
+}
+
+#heroMenu {
+  position: absolute;
+  top: 0;
+  right: 12px;
+  z-index: 1;
+}
+
+.hero-empty {
+  padding: 18px 4px 8px;
+  text-align: center;
+}
+
+.hero-empty-title {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hero-empty-hint {
+  margin-top: 2px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.hero-no-usage {
+  padding: 0 8px;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+/* ── two rings ───────────────────────────────────────────────────── */
+
+.gauges {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 6px 0 2px;
+}
+
+.gauge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  --arc-a: var(--arc-session-a);
+  --arc: var(--arc-session);
+  --arc-lift: var(--lift);
+  --glow: color-mix(in srgb, var(--arc) var(--glow-mix), transparent);
+}
+
+.gauge[data-window='7d'] {
+  --arc-a: var(--arc-week-a);
+  --arc: var(--arc-week);
+  --arc-lift: var(--lift-weekly);
+}
+
+.gauge.is-warning {
+  --arc-a: var(--warn);
+  --arc: var(--warn);
+}
+
+.gauge.is-danger {
+  --arc-a: var(--danger);
+  --arc: var(--danger);
+}
+
+.gauge-ring {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  flex: none;
+}
+
+.ring {
+  display: block;
+  transform: rotate(-90deg);
+  overflow: visible;
+}
+
+.ring circle {
+  fill: none;
+}
+
+.ring-track {
+  stroke: var(--track);
+  stroke-width: 8;
+}
+
+/* The arc takes its colour from its gradient; stop A's opacity is the comet's tail. */
+.ring-usage {
+  stroke-width: 8;
+  stroke-linecap: round;
+  filter: var(--arc-lift);
+  transition: stroke-dashoffset 1.2s cubic-bezier(0.22, 0.9, 0.24, 1);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+#sessionProgress {
+  stroke: url(#sessionArcGradient);
+}
+
+#weeklyProgress {
+  stroke: url(#weeklyArcGradient);
+}
+
+.arc-stop-a {
+  stop-color: var(--arc-a);
+  stop-opacity: var(--tail, 1);
+  transition: stop-color 0.6s ease;
+}
+
+.arc-stop-b {
+  stop-color: var(--arc);
+  transition: stop-color 0.6s ease;
+}
+
+/* A zero value draws no dot: the round cap alone would show one. */
+.gauge:not(.has-value) .ring-usage {
+  visibility: hidden;
+}
+
+.ring-time-track {
+  stroke: var(--track);
+  stroke-width: 2.5;
+  opacity: 0.55;
+}
+
+/* Window time stays calm: the end of a window is a reset, not an alarm. */
+.ring-time {
+  stroke: var(--time);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1s linear;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* Thresholds marked on the track; the arc passes over them. */
+.ring .ring-tick {
+  stroke: none;
+}
+
+.ring .ring-tick-warn {
+  fill: var(--warn);
+}
+
+.ring .ring-tick-danger {
+  fill: var(--danger);
+}
+
+/* Where an even pace through the week would be now. */
+.ring .ring-tick-pace {
+  fill: var(--ink-3);
+}
+
+.gauge-value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gauge-num {
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  transition: color 0.6s ease;
+}
+
+.gauge-pct {
+  margin-left: 1px;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.gauge.is-danger .gauge-num {
+  color: var(--danger-ink);
+}
+
+.gauge-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  text-align: center;
+}
+
+.gauge-label {
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.gauge-countdown {
+  color: var(--ink);
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.gauge.is-idle .gauge-countdown {
+  color: var(--ink-3);
+  font-size: 15px;
+}
+
+.gauge-reset,
+.gauge-pace {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.gauge-pace {
+  color: var(--warn-ink);
+}
+
+/* The number beside the rings exists for the ring-in-ring look only (P3.7). */
+.gauge-meta-pct {
+  display: none;
+}
+
+/* At thresholds: a soft breathing glow, never blinking. Hero only. */
+.gauge.is-warning .ring-usage {
+  animation: glow-warn 2.8s ease-in-out infinite;
+}
+
+.gauge.is-danger .ring-usage {
+  animation: glow-danger 2.2s ease-in-out infinite;
+}
+
+/* Last good data or a window that has rolled over: dim, dashed track, no glow. */
+.gauge.is-stale .ring-usage {
+  opacity: 0.45;
+  animation: none;
+  filter: none;
+}
+
+.gauge.is-stale .ring-track {
+  stroke-dasharray: 3 4;
+}
+
+.gauge.is-stale .gauge-num {
+  color: var(--ink-2);
+}
+
+.hero.is-disabled .gauges {
+  opacity: 0.6;
+}
+
+/* ── recharge ────────────────────────────────────────────────────── */
+
+/* The arcs are driven frame by frame in flight: no transitions then. */
+body.recharging .ring-usage,
+body.recharging .ring-time,
+body.recharging .arc-stop-a,
+body.recharging .gauge-num,
+body.recharging .gauge-meta-pct {
+  transition: none !important;
+}
+
+body.recharging .gauge .ring-usage {
+  animation: none;
+}
+
+/* Landed: one soft pulse of light along the arc. */
+@keyframes land-glow {
+  0% {
+    filter: var(--arc-lift);
+  }
+  30% {
+    filter: drop-shadow(0 0 7px var(--glow));
+  }
+  100% {
+    filter: var(--arc-lift);
+  }
+}
+
+.gauge.landed .ring-usage {
+  animation: land-glow 0.6s ease-out;
+}
+
+/* ── ring in ring (settings.gaugeStyle 'concentric', their look B) ──
+   The same elements laid out again: both rings share one grid cell (session
+   outside, week inside), the texts become two rows beside them. Adapted to
+   the 360 px popover: 108 / 78 px rings, a narrower text grid. */
+
+body.gauges-b .gauges {
+  grid-template-columns: 108px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 16px;
+  row-gap: 0;
+  align-items: stretch;
+  padding: 8px 4px 2px 8px;
+}
+
+body.gauges-b .gauge {
+  display: contents;
+}
+
+body.gauges-b .gauge-ring {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  align-self: center;
+  justify-self: center;
+}
+
+body.gauges-b #sessionGauge .gauge-ring {
+  width: 108px;
+  height: 108px;
+}
+
+body.gauges-b #weeklyGauge .gauge-ring {
+  width: 78px;
+  height: 78px;
+}
+
+body.gauges-b .ring {
+  width: 100%;
+  height: 100%;
+}
+
+body.gauges-b .ring-time,
+body.gauges-b .ring-time-track,
+body.gauges-b .ring-tick,
+body.gauges-b .gauge-value {
+  display: none;
+}
+
+/* The same visual weight (about 8 px) on both rings despite their scale. */
+body.gauges-b #sessionGauge .ring-track,
+body.gauges-b #sessionGauge .ring-usage {
+  stroke-width: 7.2;
+}
+
+body.gauges-b #weeklyGauge .ring-track,
+body.gauges-b #weeklyGauge .ring-usage {
+  stroke-width: 10;
+}
+
+/* 360 px leaves no room for their three columns: the % and the countdown
+   stack on the right, the label and the reset time get the rest. */
+body.gauges-b .gauge-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  align-content: center;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+  min-width: 0;
+  padding: 8px 0;
+  text-align: left;
+}
+
+body.gauges-b #sessionGauge .gauge-meta {
+  grid-column: 2;
+  grid-row: 1;
+  border-bottom: 0.5px solid var(--hairline);
+}
+
+body.gauges-b #weeklyGauge .gauge-meta {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+body.gauges-b .gauge-label {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+body.gauges-b .gauge-label::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--arc);
+}
+
+body.gauges-b .gauge-reset {
+  grid-column: 1;
+  grid-row: 2;
+  padding-left: 13px;
+}
+
+body.gauges-b .gauge-pace {
+  grid-column: 1 / 3;
+  grid-row: 3;
+  padding-left: 13px;
+}
+
+body.gauges-b .gauge-meta-pct {
+  display: block;
+  grid-column: 2;
+  grid-row: 1;
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: right;
+  white-space: nowrap;
+  transition: color 0.6s ease;
+}
+
+body.gauges-b .gauge-meta-pct .gauge-pct {
+  font-size: 11px;
+}
+
+body.gauges-b .gauge.is-danger .gauge-meta-pct {
+  color: var(--danger-ink);
+}
+
+body.gauges-b .gauge-countdown {
+  grid-column: 2;
+  grid-row: 2;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+}
+
+body.gauges-b .gauge.is-idle .gauge-countdown {
+  font-size: 11px;
+}
+
+/* ── more limits: model windows and spend (their expand section) ── */
+
+.expand-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 20px;
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.expand-toggle:hover {
+  background: var(--btn);
+}
+
+.expand-arrow {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.35s cubic-bezier(0.22, 0.9, 0.24, 1), stroke 0.2s ease;
+}
+
+.expand-toggle:hover .expand-arrow {
+  stroke: var(--ink);
+}
+
+.expand-toggle.open .expand-arrow {
+  transform: rotate(180deg);
+}
+
+.expand-section {
+  margin-top: 4px;
+  padding: 8px 4px 0;
+  border-top: 0.5px solid var(--track);
+  animation: reveal 0.35s cubic-bezier(0.22, 0.9, 0.24, 1);
+}
+
+.extra-row {
+  display: grid;
+  grid-template-columns: minmax(0, 96px) minmax(0, 1fr) 34px minmax(56px, auto);
+  align-items: center;
+  column-gap: 8px;
+  min-height: 22px;
+}
+
+.extra-label {
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.progress-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.progress-fill {
+  width: 0;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--weekly);
+  transition: width 1s cubic-bezier(0.22, 0.9, 0.24, 1), background-color 0.6s ease;
+}
+
+.progress-fill.warning {
+  background: var(--warn);
+}
+
+.progress-fill.danger {
+  background: var(--danger);
+}
+
+.extra-pct {
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.extra-pct.warn {
+  color: var(--warn-ink);
+}
+
+.extra-pct.crit {
+  color: var(--danger-ink);
+}
+
+.extra-side {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.extra-side .spend-used {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.extra-side .spend-used.over {
+  color: var(--danger-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-fill,
+  .expand-arrow {
+    transition: none;
+  }
+
+  .expand-section {
+    animation: none;
+  }
+
+  .ring-usage,
+  .ring-time,
+  .arc-stop-a,
+  .arc-stop-b,
+  .gauge-num {
+    transition: none;
+  }
+
+  .gauge.is-warning .ring-usage,
+  .gauge.is-danger .ring-usage {
+    animation: none;
+  }
+}

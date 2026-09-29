@@ -15,23 +15,42 @@ reads or writes your credentials itself.
 
 ## What it shows
 
-- **Menu bar:** a ring and the 5-hour usage of the active account. The ring
-  turns amber at 75 % and red at 90 %. A `?` after the number means the data
-  could not be refreshed. A `–` means the 5-hour window has just reset and
-  new data has not arrived yet.
-- **Popover** (click the menu-bar icon): one card per account with
-  - two rings: the 5-hour and the 7-day window, each with the time left until
-    it resets;
-  - per-model weekly limits and extra-usage spend, when your plan has them;
-  - badges: **Active**, **Disabled** (held out of auto-rotation),
-    **Token expired**, **Re-login**, **Stale** (only the last good measurement
-    is available), and **9m ago** when claude-swap's measurement is several
-    minutes old;
-  - a **Switch** button, and **Switch to best account** at the bottom, which
-    picks the account with the most headroom
-    (`cswap switch --strategy best`).
-- **Right-click menu:** Refresh Now, Appearance (System / Light / Dark),
-  Open at Login, Choose cswap Binary…, Quit.
+- **Menu bar:** the active account's usage next to a ring, in one of five
+  styles (Settings ▸ Menu Bar ▸ Style): ring and numbers `20 · 34` (5-hour ·
+  7-day, the default), two bars, a double ring, a double ring with numbers, or
+  the classic single ring and one percentage. Amber from 75 %, red from 90 %.
+  A `?` means the data could not be refreshed or is only the last good
+  measurement; `–` means the window has just reset and new data has not
+  arrived yet.
+- **Popover** (click the menu-bar icon):
+  - the **active account** in two large rings, the 5-hour session and the
+    7-day week, with threshold marks, a live countdown to each reset and the
+    reset time. The week ring marks where an even pace would be and says when
+    you are ahead of it. Per-model weekly limits and extra-usage spend unfold
+    under the rings. A second look puts one ring inside the other
+    (Settings ▸ Rings);
+  - **every other account** as a row with two thin bars (5h, 7d), the time to
+    its reset, badges (**Disabled**, **Token expired**, **Re-login**,
+    **Stale**, **9m ago** for an older measurement, **7d ahead of pace**), a
+    **Switch** button and a **⋯** menu (switch, in rotation on/off,
+    statistics, copy email, remove);
+  - **Switch to best account** (`cswap switch --strategy best`) and **Next**
+    at the bottom;
+  - **Statistics** (the graph button): Today / Week / Month for any account,
+    as a line, bars or summary cards — peak, average, time near the limit,
+    time in use and spend. History is kept on this Mac for 32 days;
+  - the **pin** button keeps the window on the desktop as a widget; click it
+    again to return to the menu-bar popover.
+- **Right-click menu** (also the popover's **⋯**): all accounts with their
+  usage (click to switch), Switch to Next / Best / Next Available,
+  Disable / Enable Account, Add and Remove Account (shows the `cswap` command to
+  run), Open cswap Log, Statistics, and Settings: language (English, Русский,
+  Українська, Deutsch), appearance, menu-bar style and percentage, ring look,
+  12/24-hour time, weekly reset date format, refresh interval,
+  notifications, usage history, popover or desktop widget, Open at Login,
+  and the cswap binary.
+- **Notifications** when the active account reaches 75 % and 90 % of a
+  window, when it is used up, and when it is available again.
 
 Press <kbd>Esc</kbd> to close the popover, <kbd>⌘R</kbd> to refresh.
 
@@ -118,18 +137,25 @@ apps as well, then restart the widget:
 launchctl setenv CLAUDE_CONFIG_DIR "$HOME/path/to/your/config"
 ```
 
-Settings live in
-`~/Library/Application Support/Claude Swap Widget/settings.json`:
+Settings are changed from the right-click menu and live in
+`~/Library/Application Support/Claude Swap Widget/settings.json`, for example:
 
 ```json
 {
   "cswapPath": null,
   "theme": "system",
-  "refreshSeconds": 60
+  "language": "system",
+  "trayStyle": "ring",
+  "gaugeStyle": "rings",
+  "refreshSeconds": 60,
+  "notifications": true,
+  "recordHistory": true,
+  "windowMode": "popover"
 }
 ```
 
-`refreshSeconds` is clamped to between 30 seconds and one day.
+Unknown or invalid values fall back to their defaults; `refreshSeconds` is
+clamped to between 30 seconds and one day.
 
 ## Development
 
@@ -160,13 +186,30 @@ npm run dist             # → dist/Claude Swap Widget-<version>-arm64.dmg
 
 `npm run icon` redraws `build/icon.png`.
 
+## Privacy
+
+Usage history for the statistics is kept on this Mac only, in
+`~/Library/Application Support/Claude Swap Widget/history/`, for 32 days. It
+stores percentages, spend, and each account's email, alias and organisation
+name — never tokens or credentials. Turn it off with **Settings → Keep Usage
+History**, or delete it with **Settings → Clear Usage History…**, in the
+right-click menu.
+
 ## Credits
 
 - [claude-swap](https://github.com/realiti4/claude-swap) by Onur Cetinkol
   (MIT) does all the account work. This widget is only a front end for it.
-- The glass-ring look was inspired by
-  [TheMaestr-o/claude-usage-widget](https://github.com/TheMaestr-o/claude-usage-widget)
-  (MIT). The rings here are drawn from scratch; no code or assets were copied.
+- The look — glass rings, menu bar pictures, statistics and the refresh
+  animation — as well as the usage notifications and the English, Russian,
+  Ukrainian and German translations come from
+  [Claude Usage Widget — *The* Maestro edition](https://github.com/TheMaestr-o/claude-usage-widget)
+  by [The Maestro](https://github.com/TheMaestr-o), itself based on
+  [Claude Usage Widget](https://github.com/SlavomirDurej/claude-usage-widget)
+  by Slavomir Durej. Both are MIT licensed; the code is used with the
+  author's permission (see [LICENSE](LICENSE)). Its data layer (claude.ai
+  login, session cookie) is not used: every number comes from claude-swap.
+- Charts: [Chart.js](https://www.chartjs.org) (MIT), bundled in
+  `src/renderer/vendor/`.
 
 Not affiliated with or endorsed by Anthropic. Claude and Claude Code are
 trademarks of Anthropic.

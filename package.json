@@ -17,8 +17,10 @@
   "scripts": {
     "start": "node scripts/start.js",
     "test": "node --test \"test/**/*.test.js\"",
+    "e2e": "node scripts/e2e.js",
     "dist": "electron-builder --mac dmg --arm64",
-    "icon": "node scripts/make-icon.js"
+    "icon": "node scripts/make-icon.js",
+    "vendor": "node scripts/vendor.js"
   },
   "build": {
     "appId": "io.github.btvmn.claude-swap-widget",
@@ -56,6 +58,7 @@
     }
   },
   "devDependencies": {
+    "chart.js": "4.5.1",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3"
   }

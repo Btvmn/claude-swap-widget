@@ -1,0 +1,215 @@
+/*
+ * Adapted from Claude Usage Widget — The Maestro edition
+ * (github.com/TheMaestr-o/claude-usage-widget @ b79d4b1, src/renderer/styles.css:1712-1747,
+ * 2187-2213, 2636-2672, 2795-2836; src/renderer/app.js:2640-2656).
+ * Copyright (c) 2024 Slavomir Durej; Maestro edition (c) 2026 The Maestro.
+ * MIT licence; see LICENSE, "Third-party code".
+ */
+
+/*
+ * Design tokens, one set per theme. Their stylesheet redefines most tokens in
+ * four layers on `body` / `body.theme-light`; these are the final values of
+ * that cascade, moved to :root. Light is the default and dark follows
+ * prefers-color-scheme, which Chromium derives from nativeTheme.themeSource,
+ * so main's Appearance setting switches the window material and these values
+ * together, with no class and no IPC.
+ *
+ * Their rule, kept: text uses --ink, --ink-2, --ink-3 or an -ink tone and keeps
+ * at least 4.5:1 on --sheet (test/contrast.test.js); the bright tones --warn,
+ * --danger, --weekly and --accent are fills only (arcs, bars, ticks, dots,
+ * tints). Colour on its own marks only thresholds and money.
+ *
+ * Load order: tokens.css, base.css, then the view sheets.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* Type and motion (ours). System fonts only: nothing is bundled. */
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', 'Segoe UI', system-ui, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --ease: cubic-bezier(0.22, 0.9, 0.24, 1); /* their house easing: fast start, long soft landing */
+  --ease-sweep: cubic-bezier(0.45, 0, 0.55, 1);
+
+  /* Window glass: a tint over the native vibrancy (the blur is the system's). */
+  --glass-fill: rgba(255, 255, 255, 0.55);
+  --glass-edge: rgba(0, 0, 0, 0.08);
+  --glass-hi: rgba(255, 255, 255, 0.9);
+  --window-fill: var(--glass-fill); /* ours: --sheet when there is no glass, see below */
+
+  /* Text */
+  --ink: #1d1d1f;
+  --ink-2: rgba(29, 29, 31, 0.74);
+  --ink-3: rgba(29, 29, 31, 0.64);
+
+  /* Rings and bars */
+  --track: rgba(0, 0, 0, 0.075);
+  --time: rgba(0, 0, 0, 0.34);
+  --session: #1d1d1f;
+  --weekly: #5856d6;
+  --arc-session-a: #4b4b53;
+  --arc-session: #0e0e10;
+  --arc-week-a: #7d7bf0;
+  --arc-week: #4d4bc6;
+  --lift: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.22));
+  --lift-weekly: drop-shadow(0 1px 3.5px rgba(88, 86, 214, 0.42));
+  --glow-mix: 38%; /* share of the arc colour in a gauge's --glow (72 % on dark) */
+  --shimmer: rgba(0, 0, 0, 0.09);
+
+  /* Thresholds: fills, then the text tones that go with them */
+  --warn: #ff9500;
+  --danger: #ff3b30;
+  --warn-ink: #b25000;
+  --danger-ink: #d70015;
+  --ok-ink: #146c2e;
+  --ok-fill: rgba(52, 199, 89, 0.14);
+  --ok-edge: rgba(52, 199, 89, 0.4);
+
+  /* Surfaces and controls */
+  --sheet: #f5f5f7;
+  --group: #ffffff;
+  --hairline: rgba(0, 0, 0, 0.08);
+  --field: rgba(0, 0, 0, 0.05);
+  --field-hover: rgba(0, 0, 0, 0.08);
+  --segment: #ffffff;
+  --btn: transparent;
+  --btn-hover: rgba(0, 0, 0, 0.065);
+  --btn-active: rgba(0, 0, 0, 0.11);
+  --accent: #007aff; /* selection, focus ring, pressed state; never text */
+  --accent-ink: #0066cc; /* ours: accent as text (links); #007aff is only 3.69:1 on --sheet */
+  --primary: #0064d2; /* ours: the primary button; white on it is 5.59:1 in both themes */
+  --primary-ink: #ffffff;
+
+  /*
+   * Pills (ours, from their chips): ink on a 10-14 % tint of the tone with a
+   * 0.5 px edge. On --sheet the tints darken the ground enough that
+   * --warn-ink, --danger-ink and --accent-ink fall to 4.29-4.37:1, so light
+   * pills get slightly deeper inks. Dark uses the plain -ink tones.
+   */
+  --pill-fill: var(--field);
+  --pill-edge: var(--hairline);
+  --pill-ink: var(--ink-2);
+  --pill-warn-fill: color-mix(in srgb, var(--warn) 12%, transparent);
+  --pill-warn-edge: color-mix(in srgb, var(--warn) 35%, transparent);
+  --pill-warn-ink: #a64a00;
+  --pill-crit-fill: color-mix(in srgb, var(--danger) 10%, transparent);
+  --pill-crit-edge: color-mix(in srgb, var(--danger) 30%, transparent);
+  --pill-crit-ink: #c40013;
+  --pill-accent-fill: color-mix(in srgb, var(--accent) 14%, transparent);
+  --pill-accent-edge: color-mix(in srgb, var(--accent) 36%, transparent);
+  --pill-accent-ink: #005ebd;
+
+  /*
+   * Statistics, read by stats-view.js with getComputedStyle (their chartInk()
+   * palette). Literal colours only, because Chart.js parses them: no var(),
+   * no color-mix(). The series colours are 6-digit hex, because inkAlpha()
+   * only accepts that form. Tooltip grounds are opaque: the window is glass.
+   */
+  --chart-5h: #1d1d1f;
+  --chart-7d: #5856d6;
+  --chart-spend: #f08c00;
+  --chart-grid: rgba(0, 0, 0, 0.06);
+  --chart-text: rgba(29, 29, 31, 0.64);
+  --chart-tip-bg: #ffffff;
+  --chart-tip-fg: #1d1d1f;
+  --chart-tip-edge: rgba(0, 0, 0, 0.1);
+  --chart-pill-bg: #1d1d1f;
+  --chart-pill-fg: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --glass-fill: rgba(24, 24, 28, 0.5);
+    --glass-edge: rgba(255, 255, 255, 0.14);
+    --glass-hi: rgba(255, 255, 255, 0.09);
+
+    --ink: #f5f7fa;
+    --ink-2: rgba(245, 247, 250, 0.72);
+    --ink-3: rgba(245, 247, 250, 0.52);
+
+    --track: rgba(255, 255, 255, 0.1);
+    --time: rgba(255, 255, 255, 0.46);
+    --session: #f5f7fa;
+    --weekly: #9fb4ff;
+    --arc-session-a: #ffffff;
+    --arc-session: #c9d3ff;
+    --arc-week-a: #bccaff;
+    --arc-week: #8195ff;
+    --lift: drop-shadow(0 0 4px rgba(255, 255, 255, 0.16));
+    --lift-weekly: drop-shadow(0 0 5px rgba(159, 180, 255, 0.4));
+    --glow-mix: 72%;
+    --shimmer: rgba(255, 255, 255, 0.3);
+
+    --warn: #ffb547;
+    --danger: #ff5a52;
+    --warn-ink: #ffb547;
+    --danger-ink: #ff6961;
+    --ok-ink: #30d158;
+    --ok-fill: rgba(48, 209, 88, 0.14);
+    --ok-edge: rgba(48, 209, 88, 0.36);
+
+    --sheet: #1e1e21;
+    --group: rgba(255, 255, 255, 0.045);
+    --hairline: rgba(255, 255, 255, 0.09);
+    --field: rgba(255, 255, 255, 0.08);
+    --field-hover: rgba(255, 255, 255, 0.12);
+    --segment: rgba(255, 255, 255, 0.18);
+    --btn-hover: rgba(255, 255, 255, 0.12);
+    --btn-active: rgba(255, 255, 255, 0.18);
+    --accent: #0a84ff;
+    --accent-ink: #409cff;
+
+    /* Dark pills: the plain -ink tones; the accent tint drops to 10 %, like crit. */
+    --pill-warn-ink: var(--warn-ink);
+    --pill-crit-ink: var(--danger-ink);
+    --pill-accent-fill: color-mix(in srgb, var(--accent) 10%, transparent);
+    --pill-accent-ink: var(--accent-ink);
+
+    --chart-5h: #f5f7fa;
+    --chart-7d: #9fb4ff;
+    --chart-spend: #ffb547;
+    --chart-grid: rgba(255, 255, 255, 0.06);
+    --chart-text: rgba(245, 247, 250, 0.52);
+    --chart-tip-bg: #2c2c30;
+    --chart-tip-fg: #f5f7fa;
+    --chart-tip-edge: rgba(255, 255, 255, 0.12);
+    --chart-pill-bg: #f5f7fa;
+    --chart-pill-fg: #1d1d1f;
+  }
+}
+
+/* System setting "Increase contrast". The hairline and chart text are ours. */
+@media (prefers-contrast: more) {
+  :root {
+    --ink-2: rgba(29, 29, 31, 0.86);
+    --ink-3: rgba(29, 29, 31, 0.76);
+    --track: rgba(0, 0, 0, 0.14);
+    --hairline: rgba(0, 0, 0, 0.2);
+    --chart-text: rgba(29, 29, 31, 0.76);
+  }
+}
+
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root {
+    --ink-2: rgba(245, 247, 250, 0.86);
+    --ink-3: rgba(245, 247, 250, 0.72);
+    --track: rgba(255, 255, 255, 0.18);
+    --hairline: rgba(255, 255, 255, 0.22);
+    --chart-text: rgba(245, 247, 250, 0.72);
+  }
+}
+
+/*
+ * No glass: "Reduce transparency" is on, or the renderer set html.opaque
+ * (no native material off macOS, and CSW_CAPTURE screenshots). The window is
+ * painted with the opaque sheet instead of the tint.
+ */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --window-fill: var(--sheet);
+  }
+}
+
+:root.opaque {
+  --window-fill: var(--sheet);
+}

@@ -1,0 +1,134 @@
+/*
+ * Adapted from Claude Usage Widget — The Maestro edition
+ * (github.com/TheMaestr-o/claude-usage-widget @ b79d4b1, src/renderer/styles.css:1757-1771).
+ * Copyright (c) 2024 Slavomir Durej; Maestro edition (c) 2026 The Maestro.
+ * MIT licence; see LICENSE, "Third-party code".
+ */
+
+/*
+ * The window: the shell (title bar, banner, content, footer), which region
+ * scrolls, the statistics view switch, and the drag region of the desktop
+ * widget. The shell is ours; only the title type comes from theirs.
+ *
+ * Height: #app takes its natural height, capped at the window. main sizes the
+ * window to it through ui:resize and clamps it (MAX_HEIGHT, the display). When
+ * the cap bites, exactly one region scrolls: the account rows, a setup screen
+ * or the statistics. The title bar, the hero and the footer never scroll. The
+ * natural height is therefore
+ *   #app's height + (scroller.scrollHeight − scroller.clientHeight)
+ * for the visible scroller; it shrinks as well as grows, because nothing in
+ * the shell stretches to fill a window that is taller than its content.
+ */
+
+#app {
+  display: flex;
+  flex-direction: column;
+  max-height: 100vh;
+}
+
+/* ── title bar ───────────────────────────────────────────────────── */
+
+.titlebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 12px 6px 16px;
+}
+
+.titlebar .title {
+  flex: 1;
+  min-width: 0;
+  margin-right: 4px;
+}
+
+.titlebar h1 {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#subtitle {
+  margin-top: 1px;
+  color: var(--ink-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── content and the one scrolling region ────────────────────────── */
+
+#content {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#content > * {
+  flex: none;
+}
+
+#content > .screen,
+#content > .accounts,
+#content > .stats-section {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Statistics replace the hero, the rows and the footer; the title bar stays. */
+body.view-stats #hero,
+body.view-stats #accounts,
+body.view-stats #footer {
+  display: none !important;
+}
+
+/* ── footer: Switch to best account + Next ───────────────────────── */
+
+.footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 0.5px solid var(--hairline);
+}
+
+.footer .primary {
+  flex: 1 1 auto;
+}
+
+.footer .pill-btn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 16px;
+  font-size: 12.5px;
+}
+
+/* ── desktop widget ──────────────────────────────────────────────── */
+
+/*
+ * In widget mode the title bar moves the window. Only there: the popover is
+ * not movable, and a drag region would swallow the clicks on its header
+ * buttons. Controls inside stay clickable.
+ */
+body.mode-widget #titlebar {
+  -webkit-app-region: drag;
+}
+
+body.mode-widget button,
+body.mode-widget select,
+body.mode-widget input,
+body.mode-widget a {
+  -webkit-app-region: no-drag;
+}

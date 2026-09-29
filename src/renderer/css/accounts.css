@@ -1,0 +1,188 @@
+/*
+ * Adapted from Claude Usage Widget — The Maestro edition
+ * (github.com/TheMaestr-o/claude-usage-widget @ b79d4b1, src/renderer/styles.css:2142-2175,
+ * 2767-2782, 3326-3358).
+ * Copyright (c) 2024 Slavomir Durej; Maestro edition (c) 2026 The Maestro.
+ * MIT licence; see LICENSE, "Third-party code".
+ */
+
+/*
+ * The other accounts: one row each, in their compact-bar look. Row: name and
+ * actions, the pills (when there are any), then 5h and 7d bars with their
+ * percentages and the time to the 5-hour reset.
+ */
+
+#acctList {
+  padding: 0 12px 6px;
+}
+
+#acctList:focus {
+  outline: none;
+}
+
+.acct {
+  padding: 8px 4px 9px;
+  border-top: 0.5px solid var(--hairline);
+  border-radius: 2px;
+}
+
+.acct:focus-visible {
+  outline-offset: -2px;
+}
+
+.acct-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.acct-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.acct-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.acct-actions .pill-btn {
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 11px;
+  font-size: 11.5px;
+}
+
+.acct-pills {
+  margin-top: 3px;
+}
+
+/* ── bars ───────────────────────────────────────────────────────── */
+
+.acct-bars {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 32px auto minmax(0, 1fr) 32px auto;
+  align-items: center;
+  column-gap: 6px;
+  margin-top: 6px;
+}
+
+.acct-bars .lbl {
+  color: var(--ink-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.acct-bars .pct {
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.acct-bars .pct.warn {
+  color: var(--warn-ink);
+}
+
+.acct-bars .pct.crit {
+  color: var(--danger-ink);
+}
+
+.acct-reset {
+  min-width: 52px;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.compact-bar-bg {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.compact-bar-fill {
+  width: 0;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--session);
+  transition: width 0.9s cubic-bezier(0.22, 0.9, 0.24, 1), background-color 0.6s ease;
+}
+
+.compact-bar-fill.weekly {
+  background: var(--weekly);
+}
+
+.compact-bar-fill.is-warning {
+  background: var(--warn);
+}
+
+.compact-bar-fill.is-danger {
+  background: var(--danger);
+}
+
+/* A small share still reads as a short bar, not a dot. */
+.compact-bar-fill.has-value {
+  min-width: 6px;
+}
+
+.acct-no-usage {
+  margin-top: 4px;
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+
+/* Disabled: out of auto-rotation, still switchable by hand. */
+.acct.is-disabled .acct-name,
+.acct.is-disabled .acct-bars {
+  opacity: 0.55;
+}
+
+/* Last good data only. */
+.acct.is-stale .compact-bar-fill {
+  opacity: 0.45;
+}
+
+/* ── the sweep while cswap works ─────────────────────────────────── */
+
+.compact-bar-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, var(--shimmer), transparent);
+  transform: translateX(-100%);
+  opacity: 0;
+  pointer-events: none;
+  animation: bar-sweep 1.1s cubic-bezier(0.45, 0, 0.55, 1) infinite paused;
+  transition: opacity 0.35s ease;
+}
+
+#acctList.sweeping .compact-bar-bg::after {
+  opacity: 1;
+  animation-play-state: running;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-bar-fill {
+    transition: none;
+  }
+
+  .compact-bar-bg::after {
+    animation: none;
+  }
+}

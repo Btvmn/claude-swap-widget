@@ -1,0 +1,117 @@
+/*
+ * Adapted from Claude Usage Widget — The Maestro edition
+ * (github.com/TheMaestr-o/claude-usage-widget @ b79d4b1, src/renderer/styles.css:373-404, 2571-2591).
+ * Copyright (c) 2024 Slavomir Durej; Maestro edition (c) 2026 The Maestro.
+ * MIT licence; see LICENSE, "Third-party code".
+ */
+
+/*
+ * Setup and status screens in #screen[data-phase]: loading, missing, too-old,
+ * no-accounts and error. Their empty-state type, stacked for the 360 px
+ * popover: a 28 px stroke icon, h2, paragraphs, our .cmd copy rows (base.css)
+ * and a row of .actions.
+ *
+ *   <section id="screen" class="screen" data-phase="missing">
+ *     <svg class="screen-icon" viewBox="0 0 24 24">…</svg>   built with createElementNS
+ *     <h2>…</h2> <p>…</p> <div class="cmd">…</div> <p class="path">…</p>
+ *     <div class="actions"><button class="secondary">…</button> <button class="link">…</button></div>
+ *   </section>
+ *
+ * The error text from cswap is the content, so it is a p.message in --ink,
+ * not a red paragraph. Paths and "Tried …" lines are p.path.
+ */
+
+.screen {
+  padding: 4px 16px 14px;
+}
+
+.screen-icon {
+  display: block;
+  width: 28px;
+  height: 28px;
+  margin: 2px 0 8px;
+  color: var(--ink-2);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.screen[data-phase='too-old'] .screen-icon {
+  color: var(--warn-ink);
+}
+
+.screen[data-phase='error'] .screen-icon {
+  color: var(--danger-ink);
+}
+
+.screen h2 {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.screen p {
+  margin: 0 0 10px;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.screen .message {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+.screen .path {
+  margin: 2px 0 0;
+  color: var(--ink-3);
+  font: 11px/1.4 var(--mono);
+  word-break: break-all;
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+.screen .path:empty {
+  display: none;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ── loading ─────────────────────────────────────────────────────── */
+
+.screen[data-phase='loading'] {
+  padding: 28px 16px 32px;
+  text-align: center;
+}
+
+.spinner {
+  width: 22px;
+  height: 22px;
+  margin: 0 auto 10px;
+  border: 2px solid var(--track);
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+/* A one-line stand-in while a view has nothing to show yet. */
+.placeholder {
+  padding: 28px 0;
+  color: var(--ink-2);
+  text-align: center;
+}

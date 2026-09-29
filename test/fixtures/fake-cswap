@@ -7,11 +7,29 @@
 //   CSWAP_PATH="$PWD/test/fixtures/fake-cswap" npm start
 //
 // Environment:
-//   FAKE_CSWAP_SCENARIO  default | empty | root | garbage | slow | schema2 | old | flood | crash
+//   FAKE_CSWAP_SCENARIO  default (as cswap, which serves one measurement for a few minutes:
+//                          repeated lists and statuses report the same usageFetchedAt /
+//                          lastGoodFetchedAt until the measurement is 180 s old, then the next
+//                          one is a new measurement. Its time is kept in FAKE_CSWAP_STATE;
+//                          the ages and everything else are as before)
+//                        | empty | root | garbage | slow | schema2 | old | flood | crash
 //                        | stubborn (hangs and ignores SIGINT/SIGTERM)
 //                        | rolled (account 1's 5h window reset a minute ago)
+//                        | drift (every `list` is a new measurement: usageFetchedAt moves
+//                          300 s on and each 5h/7d pct rises by 3, capped at 100; the first
+//                          list looks like default. The clock is compressed, so after the
+//                          first list the timestamps run ahead of the wall clock.
+//                          lastGoodFetchedAt stays put. The count is kept in FAKE_CSWAP_STATE)
+//                        | nofetchedat (rows without usageFetchedAt / lastGoodFetchedAt, as
+//                          an older cswap; the ages are still there)
+//                        | single (alice only)
+//                        | noactive (the live Claude Code login is an unmanaged account:
+//                          activeAccountNumber null, no row active, status `active: null`;
+//                          strategy switches are the `unmanaged-account` no-op, a direct
+//                          switch reports `from: {number: null, …}`)
 //   FAKE_CSWAP_STATE     file that remembers the active account and the disabled
-//                        ones (switch, disable and enable persist)
+//                        ones (switch, disable and enable persist), and the clocks of
+//                        default and drift
 //   FAKE_CSWAP_VERSION   what `--version` prints (default 0.27.0b1)
 //   FAKE_CSWAP_MARKER    file where the 'slow' scenario writes the signal that stopped it
 //   FAKE_CSWAP_PIDFILE   file where the fake writes its pid at startup
@@ -97,20 +115,71 @@ const ACCOUNTS = [
   { number: 5, email: 'erin@example.com', ...personal('erin@example.com'), disabled: true, usage: usage(5, 12) },
 ];
 
-// State: { active, disabled: [numbers] }. Without a `disabled` key the
+// State: { active, disabled: [numbers], drift? }. Without a `disabled` key the
 // roster's own flags apply (erin), so older state files keep working.
-function readState() {
+function readRaw() {
   try {
     const s = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    return { active: s.active ?? 1, disabled: Array.isArray(s.disabled) ? s.disabled : null };
+    return s && typeof s === 'object' ? s : {};
   } catch {
-    return { active: 1, disabled: null };
+    return {};
   }
 }
 
-function writeState(patch) {
-  fs.writeFileSync(statePath, JSON.stringify({ ...readState(), ...patch }));
+function readState() {
+  const s = readRaw();
+  return { active: s.active ?? 1, disabled: Array.isArray(s.disabled) ? s.disabled : null };
 }
+
+// Keeps keys it does not know (the drift counter, the measuring time) across
+// switches. Written to a temp file and renamed, so a concurrent reader never
+// sees half a file (a list may write now, see measuredClock).
+function writeState(patch) {
+  const tmp = `${statePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ ...readRaw(), ...readState(), ...patch }));
+  fs.renameSync(tmp, statePath);
+}
+
+// default: cswap measures an account and then serves that measurement for a
+// while (at least its 180 s TTL), so every list in between reports the same
+// usageFetchedAt. The measuring time is remembered as `measuredAt`; once it is
+// MEASURE_TTL_MS old (or in the future), this call is a new measurement.
+// Without a writable state file every call is a new measurement, as before.
+const MEASURE_TTL_MS = 180_000;
+
+function measuredClock() {
+  const at = readRaw().measuredAt;
+  if (Number.isFinite(at) && at <= now && now - at < MEASURE_TTL_MS) return at;
+  try {
+    writeState({ measuredAt: now });
+  } catch {}
+  return now;
+}
+
+// drift: { start: epoch ms of the first list, lists: how many lists so far }.
+// A list advances it; every other command sees the last list's values.
+const DRIFT_STEP_S = 300;
+const DRIFT_PCT = 3;
+
+function driftClock(advance) {
+  const d = readRaw().drift;
+  const start = d && Number.isFinite(d.start) ? d.start : now;
+  const lists = d && Number.isInteger(d.lists) && d.lists >= 0 ? d.lists : 0;
+  if (advance) writeState({ drift: { start, lists: lists + 1 } });
+  const step = advance ? lists : Math.max(0, lists - 1);
+  return { start, clock: start + step * DRIFT_STEP_S * 1000, bump: step * DRIFT_PCT };
+}
+
+function drifted(a, { start, clock, bump }) {
+  const up = (w) => (w && typeof w.pct === 'number' ? { ...w, pct: Math.min(100, w.pct + bump) } : w);
+  if (!a.usage) return { ...a, clock: start }; // last-good data does not move
+  const sevenDay = up(a.usage.sevenDay);
+  if (sevenDay && typeof sevenDay.expectedPct === 'number') sevenDay.aheadOfPace = sevenDay.pct > sevenDay.expectedPct;
+  return { ...a, clock, usage: { ...a.usage, fiveHour: up(a.usage.fiveHour), sevenDay } };
+}
+
+// The live login of the noactive scenario, which claude-swap does not manage.
+const STRANGER = { number: null, email: 'stranger@example.com' };
 
 const writeActive = (n) => writeState({ active: n });
 
@@ -127,14 +196,19 @@ function row(a, active) {
   };
   if (a.alias) r.alias = a.alias;
   if (a.disabled) r.disabled = true;
+  const clock = a.clock ?? now; // when cswap measured: drift and default keep their own clock
   if (r.usage) {
     const age = a.usageAgeSeconds ?? 30.1;
-    r.usageFetchedAt = iso(now - age * 1000);
+    r.usageFetchedAt = iso(clock - age * 1000);
     r.usageAgeSeconds = age;
   } else if (a.lastGoodUsage) {
     r.lastGoodUsage = a.lastGoodUsage;
-    r.lastGoodFetchedAt = iso(now - a.lastGoodAgeSeconds * 1000);
+    r.lastGoodFetchedAt = iso(clock - a.lastGoodAgeSeconds * 1000);
     r.lastGoodAgeSeconds = a.lastGoodAgeSeconds;
+  }
+  if (scenario === 'nofetchedat') {
+    delete r.usageFetchedAt;
+    delete r.lastGoodFetchedAt;
   }
   r.someFutureField = 'ignored by consumers'; // the contract is additive
   return r;
@@ -217,10 +291,19 @@ function main(argv) {
     return;
   }
   const schemaVersion = scenario === 'schema2' ? 2 : 1;
+  const command = argv.filter((a) => a !== '--json')[0];
+  const drift = scenario === 'drift' ? driftClock(command === 'list' || command === 'ls') : null;
+  const measured = scenario === 'default' && ['list', 'ls', 'status'].includes(command) ? measuredClock() : null;
   const state = readState();
-  const roster = scenario === 'empty' ? [] : scenario === 'rolled' ? ACCOUNTS.map((a) => (a.number === 1 ? { ...a, usage: rolledOver(a.usage) } : a)) : ACCOUNTS;
+  let roster = ACCOUNTS;
+  if (measured !== null) roster = ACCOUNTS.map((a) => ({ ...a, clock: measured }));
+  else if (scenario === 'empty') roster = [];
+  else if (scenario === 'rolled') roster = ACCOUNTS.map((a) => (a.number === 1 ? { ...a, usage: rolledOver(a.usage) } : a));
+  else if (scenario === 'single') roster = ACCOUNTS.filter((a) => a.number === 1);
+  else if (drift) roster = ACCOUNTS.map((a) => drifted(a, drift));
   const accounts = state.disabled ? roster.map((a) => ({ ...a, disabled: state.disabled.includes(a.number) })) : roster;
-  const active = state.active;
+  // single: a remembered slot that is not in the roster falls back to alice.
+  const active = scenario === 'single' && !roster.some((a) => a.number === state.active) ? 1 : state.active;
 
   // disable / enable have no --json in cswap: text on stdout, "Error: …" on
   // stderr with exit 1.
@@ -250,20 +333,36 @@ function main(argv) {
     process.stderr.write('fake-cswap only speaks --json (and disable/enable)\n');
     process.exit(2);
   }
-  const activeAcc = accounts.find((a) => a.number === active) || null;
+  // noactive: Claude Code is logged in to an account claude-swap does not manage.
+  const live = scenario === 'noactive' ? null : active;
+  const activeAcc = accounts.find((a) => a.number === live) || null;
   const [cmd, ...rest] = argv.filter((a) => a !== '--json');
 
   // Like cswap 0.26: an empty install lists as `accounts: []` (exit 0);
   // only switch raises the ConfigError.
   if (cmd === 'list' || cmd === 'ls') {
-    out({ schemaVersion, activeAccountNumber: activeAcc ? active : null, accounts: accounts.map((a) => row(a, active)) });
+    out({ schemaVersion, activeAccountNumber: activeAcc ? live : null, accounts: accounts.map((a) => row(a, live)) });
   }
   if (cmd === 'status') {
-    out({ schemaVersion, active: activeAcc ? row(activeAcc, active) : null });
+    out({ schemaVersion, active: activeAcc ? row(activeAcc, live) : null });
   }
   if (cmd === 'switch') {
     if (!accounts.length) fail('ConfigError', 'No accounts are managed yet');
     const si = rest.indexOf('--strategy');
+    // cswap's JSON mode reports an unmanaged live login as a no-op for every
+    // strategy (bare switch included); a direct switch goes ahead.
+    if (scenario === 'noactive' && (si !== -1 || rest[0] === undefined)) {
+      out({
+        schemaVersion: 1,
+        switched: false,
+        from: STRANGER,
+        to: STRANGER,
+        strategy: si !== -1 ? rest[si + 1] : 'rotation',
+        reason: 'unmanaged-account',
+        message: 'Active account is not managed; run cswap --add-account',
+        warnings: [],
+      });
+    }
     if (si !== -1) {
       const strategy = rest[si + 1];
       const pool = accounts.filter((a) => !a.disabled && a.usage);
@@ -302,7 +401,7 @@ function main(argv) {
     if (!toA) {
       fail('AccountNotFoundError', /^\d+$/.test(target) ? `Account-${target} does not exist` : `No account found with identifier: ${target}`);
     }
-    return switchResult(activeAcc, toA, 'direct');
+    return switchResult(scenario === 'noactive' ? STRANGER : activeAcc, toA, 'direct');
   }
   fail('ValidationError', `Unsupported command in fake-cswap: ${cmd}`, 2);
 }

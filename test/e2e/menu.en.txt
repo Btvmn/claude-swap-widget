@@ -1,0 +1,82 @@
+✓ 1  work  …
+  2  bob@example.com  …
+  3  carol@example.com  …
+  4  dave@example.com  …
+  5  erin@example.com  …
+──
+  Switch to Next
+  Switch to Best
+  Next Available
+──
+  Disable / Enable Account ▸
+  ✓ 1  work
+  ✓ 2  bob@example.com
+  ✓ 3  carol@example.com
+  ✓ 4  dave@example.com
+    5  erin@example.com
+  Add Account…
+  Remove Account ▸
+    1  work…
+    2  bob@example.com…
+    3  carol@example.com…
+    4  dave@example.com…
+    5  erin@example.com…
+  Open cswap Log
+  Statistics…
+──
+  Settings ▸
+    Language ▸
+    ✓ System
+      English
+      Русский
+      Українська
+      Deutsch
+    Appearance ▸
+    ✓ System
+      Light
+      Dark
+    Menu Bar ▸
+      Style ▸
+      ✓ Classic
+        Ring and Numbers
+        Two Bars
+        Double Ring
+        Double Ring and Numbers
+      Percentage ▸
+      ✓ Session (5h)
+        Weekly (7d)
+        Both (5h · 7d)
+        Highest
+        None
+      Show Account Name
+    Rings ▸
+    ✓ Side by Side
+      Ring in Ring
+    Time ▸
+    ✓ System
+      12-hour (3:59 PM)
+      24-hour (15:59)
+    Weekly Reset Date ▸
+    ✓ Oct 2
+      Fri, Oct 2
+      Fri, Oct 2, 3:59 PM
+    Refresh Every ▸
+      30 seconds
+    ✓ 1 minute
+      2 minutes
+      5 minutes
+  ✓ Notifications
+  ✓ Keep Usage History
+    Clear Usage History…
+    Window ▸
+    ✓ Menu Bar Popover
+      Desktop Widget
+    ──
+    ✓ Keep Widget on Top [disabled]
+    Open at Login [hidden]
+  ──
+    Choose cswap Binary…
+    Use cswap from PATH [hidden]
+  About Claude Swap Widget
+  Refresh Now
+  Quit [role quit]

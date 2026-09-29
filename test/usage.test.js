@@ -4,8 +4,10 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const vm = require('vm');
 
 const U = require('../src/shared/usage');
+const I18n = require('../src/shared/i18n');
 const { sanitize, loadSettings, saveSettings, DEFAULTS, MAX_REFRESH_S } = require('../src/settings');
 const { ringBitmap, trayImage, SIZE_PT } = require('../src/tray-icon');
 
@@ -13,9 +15,11 @@ const fresh = { fiveHour: { pct: 20, resetsAt: '2026-09-29T12:50:00.603140+00:00
 
 test('level thresholds: amber at 75, red at 90', () => {
   assert.equal(U.level(0), 'ok');
-  assert.equal(U.level(74.9), 'ok');
+  assert.equal(U.level(74.4), 'ok');
+  assert.equal(U.level(74.5), 'warn', 'shows as 75%');
   assert.equal(U.level(75), 'warn');
-  assert.equal(U.level(89.9), 'warn');
+  assert.equal(U.level(89.4), 'warn');
+  assert.equal(U.level(89.5), 'crit', 'shows as 90%');
   assert.equal(U.level(90), 'crit');
   assert.equal(U.level(120), 'crit');
   assert.equal(U.level(null), 'none');
@@ -283,4 +287,282 @@ test('pace: "7d ahead of pace" badge and menu labels', () => {
   const off = { number: 5, email: 'e@x', disabled: true, usageStatus: 'token_expired', usage: null, lastGoodUsage: { fiveHour: { pct: 5, resetsAt: '2026-09-29T11:00:00Z' } } };
   assert.equal(U.menuLabel(off, now), '5  e@x  5h reset  — disabled, token expired, stale');
   assert.equal(U.shortName({ email: 'contact@example.com' }), 'contact');
+});
+
+// --- through a translator (PLAN §6.2): English by default, ru/uk/de on request
+
+const ru = I18n.translator('ru');
+const de = I18n.translator('de');
+// ICU puts no-break spaces into formatted times and dates; compare with plain ones.
+const plain = (s) => s.replace(/[\u00a0\u2009\u202f]/g, ' ');
+const NOW = Date.parse('2026-09-29T12:00:00Z');
+const STATUSES = ['token_expired', 'relogin_required', 'keychain_unavailable', 'foreign_credential', 'no_credentials', 'api_key', 'unavailable'];
+const paceRow = {
+  number: 1,
+  email: 'contact@example.com',
+  active: true,
+  usageStatus: 'ok',
+  usage: {
+    fiveHour: { pct: 100, resetsAt: '2026-09-29T14:47:00+00:00' },
+    sevenDay: { pct: 62, resetsAt: '2026-10-04T15:00:00+00:00', expectedPct: 48.2, aheadOfPace: true },
+    scoped: [{ name: 'Fable', pct: 76, resetsAt: '2026-10-04T15:00:00+00:00', aheadOfPace: true }],
+  },
+};
+const offRow = { number: 5, email: 'e@x', disabled: true, usageStatus: 'token_expired', usage: null, lastGoodUsage: { fiveHour: { pct: 5, resetsAt: '2026-09-29T11:00:00Z' } } };
+
+test('STATUS_BADGES: a tone and two i18n keys per status, and a menu line key', () => {
+  assert.deepEqual(Object.keys(U.STATUS_BADGES), STATUSES);
+  assert.ok(Object.isFrozen(U.STATUS_BADGES));
+  for (const st of STATUSES) {
+    const b = U.STATUS_BADGES[st];
+    assert.ok(Object.isFrozen(b), st);
+    assert.deepEqual(b, { tone: b.tone, labelKey: `badge.${st}`, tipKey: `badge.tip.${st}` });
+    assert.ok(['warn', 'crit', 'info', 'muted'].includes(b.tone), st);
+    for (const key of [b.labelKey, b.tipKey, `menuLine.${st}`]) assert.ok(key in I18n.STRINGS.en, key);
+  }
+  // the tones are today's
+  assert.deepEqual(
+    STATUSES.map((st) => U.STATUS_BADGES[st].tone),
+    ['warn', 'crit', 'warn', 'warn', 'crit', 'info', 'muted'],
+  );
+  // an inherited property is not a status
+  assert.deepEqual(U.badges({ usageStatus: 'constructor', usage: null }), [{ key: 'constructor', label: 'constructor', tone: 'muted' }]);
+  assert.equal(U.menuLabel({ number: 2, email: 'a@b.c', usageStatus: 'toString', usage: null }, NOW), '2  a@b.c  — toString');
+});
+
+test('badges speak the translator’s language; German keeps its capitals', () => {
+  const t = (row, tr) => U.badges(row, tr).map((b) => [b.key, b.label, b.tone, b.title]);
+  assert.deepEqual(t(offRow, de), [
+    ['disabled', 'Deaktiviert', 'muted', 'Vom automatischen Wechsel ausgenommen'],
+    ['token_expired', 'Token abgelaufen', 'warn', 'Claude Code erneuert es bei der nächsten Nutzung; cswap versucht es selbst erneut'],
+    ['stale', 'Veraltet', 'muted', 'Letzte gültige Messung wird angezeigt'],
+  ]);
+  assert.deepEqual(t({ ...offRow, lastGoodAgeSeconds: 5400 }, ru)[2], ['stale', 'Устарело · 1 ч 30 мин назад', 'muted', 'Показаны последние удачные данные']);
+  assert.deepEqual(t({ usageStatus: 'ok', usage: fresh, usageAgeSeconds: 540 }, de), [
+    ['aged', 'vor 9 Min.', 'muted', 'Vor 9 Min. gemessen; cswap misst jedes Konto nach eigenem Zeitplan neu'],
+  ]);
+  assert.deepEqual(t(paceRow, ru), [
+    ['active', 'Активный', 'accent', 'Этот аккаунт сейчас использует Claude Code'],
+    ['pace', 'Неделя: опережает график', 'warn', 'Израсходовано 62%, а при равномерном расходе было бы 48%'],
+  ]);
+  assert.equal(U.paceNote({ pct: 81.6, aheadOfPace: true }, de), '82 % verbraucht – schneller als bei gleichmäßiger Nutzung bis zum Wochen-Reset');
+  for (const st of STATUSES) {
+    const [b] = U.badges({ usageStatus: st, usage: null }, de);
+    assert.equal(b.label, I18n.STRINGS.de[`badge.${st}`], st);
+    assert.equal(b.title, I18n.STRINGS.de[`badge.tip.${st}`], st);
+  }
+  // cswap's own word for a status we do not know stays as it is
+  assert.deepEqual(U.badges({ usageStatus: 'rate_limited_by_moon', usage: null }, ru)[0], { key: 'rate_limited_by_moon', label: 'rate limited by moon', tone: 'muted' });
+  // the English default now titles the Active badge too
+  assert.deepEqual(U.badges({ active: true, usageStatus: 'ok', usage: fresh })[0], { key: 'active', label: 'Active', tone: 'accent', title: 'The account Claude Code uses now' });
+});
+
+test('formatDuration, label and shortName through a translator', () => {
+  assert.deepEqual([45, 720, 5400, 7200, 3 * 86400 + 4 * 3600, 86400].map((s) => U.formatDuration(s, ru)), ['45 с', '12 мин', '1 ч 30 мин', '2 ч', '3 д 4 ч', '1 д']);
+  assert.equal(U.formatDuration(5400, de), '1 Std. 30 Min.');
+  assert.equal(U.formatDuration(5400, 'uk'), '1 год 30 хв', 'a language code works too');
+  assert.equal(U.formatDuration(5400, 'xx'), '1h 30m', 'an unknown code is English');
+  assert.equal(U.formatDuration(Infinity), '', 'no "Infinityd"');
+  for (const s of [0, 59, 60, 3599, 3600, 86399, 86400, 1e6]) assert.equal(U.formatDuration(s, ru), I18n.formatDuration(ru, s), `s = ${s}`);
+  assert.equal(U.label({ number: 7 }, de), 'Konto 7');
+  assert.equal(U.label({ number: 7 }, ru), 'Аккаунт 7');
+  assert.equal(U.label({ alias: 'work', number: 7 }, ru), 'work');
+  assert.equal(U.shortName({ number: 3 }, de), 'Konto 3');
+});
+
+test('menuLabel in ru and de: localised windows and notes, German capitals kept', () => {
+  assert.equal(U.menuLabel(paceRow, NOW, ru), '1  contact@example.com  5 ч 100% (2 ч 47 мин) · 7 дн 62% (опережает) (5 д 3 ч) · Fable 76% (опережает) (5 д 3 ч)');
+  assert.equal(U.menuLabel(paceRow, NOW, de), '1  contact@example.com  5 Std. 100 % (2 Std. 47 Min.) · 7 T 62 % (über Plan) (5 T 3 Std.) · Fable 76 % (über Plan) (5 T 3 Std.)');
+  assert.equal(U.menuLabel(offRow, NOW, ru), '5  e@x  5 ч: обновлён  — отключён, токен истёк, устарело');
+  assert.equal(U.menuLabel(offRow, NOW, de), '5  e@x  5 Std.: zurückgesetzt  — deaktiviert, Token abgelaufen, veraltet');
+  for (const st of STATUSES) {
+    assert.equal(U.menuLabel({ number: 2, email: 'a@b.c', usageStatus: st, usage: null }, NOW, de), `2  a@b.c  — ${I18n.STRINGS.de[`menuLine.${st}`]}`, st);
+  }
+  // English is today's, with "API key" no longer lowercased
+  assert.equal(U.menuLabel({ number: 2, email: 'a@b.c', usageStatus: 'relogin_required', usage: null }, NOW), '2  a@b.c  — re-login');
+  assert.equal(U.menuLabel({ number: 2, email: 'a@b.c', usageStatus: 'api_key', usage: null }, NOW), '2  a@b.c  — API key');
+  assert.equal(U.menuLabel({ number: 4, usage: null }, NOW, de), '4  Konto 4');
+});
+
+test('trayInfo in ru and de: title, tooltip and every phase', () => {
+  const state = { phase: 'ok', accounts: [paceRow] };
+  const info = U.trayInfo(state, NOW, { mode: 'both' }, de);
+  assert.equal(info.title, '100 % · 62 %');
+  assert.equal(info.level, 'crit');
+  assert.equal(info.tooltip, 'contact@example.com · 5 Std. 100 % · 7 T 62 % (über Plan)');
+  assert.equal(U.trayInfo(state, NOW, { mode: 'both' }, ru).tooltip, 'contact@example.com · 5 ч 100% · 7 дн 62% (опережает график)');
+  const failing = { ...state, error: { kind: 'timeout', message: 'cswap did not answer in time' }, fetchedAt: '2026-09-29T09:00:00Z' };
+  assert.equal(U.trayInfo(failing, NOW, { mode: '7d' }, de).title, '62 %?');
+  assert.match(U.trayInfo(failing, NOW, {}, de).tooltip, / · seit 3 Std\. nicht aktualisiert$/);
+  assert.match(U.trayInfo({ ...state, accounts: [{ ...offRow, active: true }] }, NOW, {}, ru).tooltip, /^e@x · 5 ч: лимит обновился, ждём свежих данных · устарело$/);
+  const aged = { phase: 'ok', accounts: [{ active: true, email: 'a@b.c', usageStatus: 'ok', usage: fresh, usageAgeSeconds: 540 }] };
+  assert.equal(U.trayInfo(aged, Date.parse('2026-09-29T12:00:00Z'), {}, ru).tooltip, 'a@b.c · 5 ч 20% · 7 дн 34% · замер 9 мин назад');
+  assert.equal(U.trayInfo({ phase: 'ok', accounts: [{ active: true, number: 3, usage: fresh }] }, NOW, { showName: true, mode: 'off' }, de).title, 'Konto 3');
+  const phases = (tr) => [
+    U.trayInfo(null, NOW, {}, tr).tooltip,
+    U.trayInfo({ phase: 'missing' }, NOW, {}, tr).tooltip,
+    U.trayInfo({ phase: 'no-accounts' }, NOW, {}, tr).tooltip,
+    U.trayInfo({ phase: 'error', error: { message: 'boom' } }, NOW, {}, tr).tooltip,
+    U.trayInfo({ phase: 'error' }, NOW, {}, tr).tooltip,
+    U.trayInfo({ phase: 'ok', accounts: [] }, NOW, {}, tr).tooltip,
+  ];
+  assert.deepEqual(phases(ru), [
+    'Аккаунты Claude — загрузка…',
+    'claude-swap нужно настроить',
+    'В claude-swap пока нет аккаунтов',
+    'claude-swap: boom',
+    'claude-swap: Неизвестная ошибка',
+    'Нет активного аккаунта',
+  ]);
+  assert.deepEqual(phases(undefined), [
+    'Claude accounts — loading…',
+    'claude-swap needs setup',
+    'No accounts in claude-swap yet',
+    'claude-swap: boom',
+    'claude-swap: Unknown error',
+    'No active account',
+  ]);
+  // the translator may also come in opts, as main's ctx.t (no .lang)
+  const ctxT = (key, vars) => de(key, vars);
+  assert.equal(U.trayInfo(state, NOW, { mode: 'both', t: ctxT }).title, '100 % · 62 %');
+  assert.equal(U.trayInfo(state, NOW, { t: ru }, de).tooltip, info.tooltip.replace(/ · 7 T.*/, ' · 7 T 62 % (über Plan)'), 'the argument wins over opts.t');
+});
+
+// Built from local fields, so these hold in any time zone.
+const local = (d, h, m) => new Date(2026, 9, d, h, m); // October 2026; the 2nd is a Friday
+const cswapIso = (d) => d.toISOString().replace(/\.(\d{3})Z$/, '.$1140+00:00');
+const lineState = (five, seven) => ({
+  phase: 'ok',
+  accounts: [{ active: true, email: 'a@b.c', usageStatus: 'ok', usage: { fiveHour: five, sevenDay: seven } }],
+});
+
+test('trayInfo tooltipLines: reset times under the first line (PLAN §4.3)', () => {
+  const now = local(2, 12, 0).getTime();
+  const state = lineState({ pct: 20.4, resetsAt: cswapIso(local(2, 15, 59)) }, { pct: 34, resetsAt: cswapIso(local(6, 9, 5)) });
+  const lines = (opts, tr) => U.trayInfo(state, now, opts, tr).tooltipLines.map(plain);
+  assert.deepEqual(lines({ locale: 'en-US' }), ['Session: 20% · resets at 3:59 PM', 'Week: 34% · resets Oct 6']);
+  assert.deepEqual(lines({}), ['Session: 20% · resets at 3:59 PM', 'Week: 34% · resets Oct 6'], 'English defaults to en-US');
+  assert.deepEqual(lines({ locale: 'en-GB' }), ['Session: 20% · resets at 15:59', 'Week: 34% · resets 6 Oct']);
+  assert.deepEqual(lines({ locale: 'en-US', hour12: false, weeklyDateFormat: 'date-day' }), ['Session: 20% · resets at 15:59', 'Week: 34% · resets Tue, Oct 6']);
+  assert.deepEqual(lines({ locale: 'en-US', hour12: true, weeklyDateFormat: 'date-day-time' }), ['Session: 20% · resets at 3:59 PM', 'Week: 34% · resets Tue, Oct 6, 9:05 AM']);
+  assert.deepEqual(lines({ locale: 'ru-RU' }, ru), ['Сессия: 20% · обновится в 15:59', 'Неделя: 34% · обновится 6 окт.']);
+  assert.deepEqual(lines({}, ru), ['Сессия: 20% · обновится в 15:59', 'Неделя: 34% · обновится 6 окт.'], 'the translator’s language picks the locale');
+  assert.deepEqual(lines({ locale: 'de-DE', weeklyDateFormat: 'date-day-time' }, de), ['Sitzung: 20 % · Reset um 15:59', 'Woche: 34 % · Reset Di., 6. Okt., 09:05']);
+  assert.deepEqual(lines({ locale: 'de-DE' }, (k, v) => de(k, v)), ['Sitzung: 20 % · Reset um 15:59', 'Woche: 34 % · Reset 6. Okt.'], 'a wrapper without .lang');
+  // line 1 is unchanged
+  assert.equal(U.trayInfo(state, now).tooltip, 'a@b.c · 5h 20% · 7d 34%');
+  assert.equal(U.trayInfo(state, now).title, '20%');
+});
+
+test('trayInfo tooltipLines: only windows with a reset still ahead, absent when there is none', () => {
+  const now = local(2, 12, 0).getTime();
+  const later = cswapIso(local(2, 15, 59));
+  const week = cswapIso(local(6, 9, 5));
+  const lines = (five, seven) => U.trayInfo(lineState(five, seven), now, { locale: 'en-US' }).tooltipLines;
+  // the 5h window rolled over: the first line already says so
+  assert.deepEqual(lines({ pct: 96, resetsAt: cswapIso(local(2, 11, 0)) }, { pct: 34, resetsAt: week }).map(plain), ['Week: 34% · resets Oct 6']);
+  // no reset time (a window that has not started), no pct, or an unreadable time
+  assert.deepEqual(lines({ pct: 0, resetsAt: null }, { pct: 34, resetsAt: week }).map(plain), ['Week: 34% · resets Oct 6']);
+  assert.deepEqual(lines({ resetsAt: later }, { pct: 34, resetsAt: 'soon' }), undefined);
+  assert.equal('tooltipLines' in U.trayInfo(lineState(null, null), now), false);
+  assert.equal('tooltipLines' in U.trayInfo({ phase: 'loading' }, now), false);
+  // stale last-good data still tells its reset times; line 1 says it is stale
+  const stale = { phase: 'ok', accounts: [{ active: true, email: 'a@b.c', usage: null, lastGoodUsage: { fiveHour: { pct: 42, resetsAt: later } } }] };
+  const info = U.trayInfo(stale, now, { locale: 'en-US' });
+  assert.equal(info.tooltip, 'a@b.c · 5h 42% · stale');
+  assert.deepEqual(info.tooltipLines.map(plain), ['Session: 42% · resets at 3:59 PM']);
+  // the whole tooltip, as main sets it
+  assert.equal(plain([info.tooltip, ...(info.tooltipLines || [])].join('\n')), 'a@b.c · 5h 42% · stale\nSession: 42% · resets at 3:59 PM');
+});
+
+// --- the same English without i18n.js (today's index.html loads usage.js alone)
+
+const USAGE_SRC = fs.readFileSync(path.join(__dirname, '../src/shared/usage.js'), 'utf8');
+const I18N_SRC = fs.readFileSync(path.join(__dirname, '../src/shared/i18n.js'), 'utf8');
+
+// Rows and states that reach every string usage.js has.
+function scenarios() {
+  const now = NOW;
+  const rows = [
+    paceRow,
+    offRow,
+    { ...offRow, lastGoodAgeSeconds: 5400 },
+    { number: 7, usageStatus: 'ok', usage: fresh, usageAgeSeconds: 540 },
+    { number: 8, alias: 'work', active: true, usageStatus: 'ok', usage: { sevenDay: { pct: 90, aheadOfPace: true } } },
+    { number: 9, email: 'z@z', usageStatus: 'rate_limited_by_moon', usage: null },
+    ...STATUSES.map((st, i) => ({ number: 10 + i, email: `${st}@x`, usageStatus: st, usage: null })),
+  ];
+  const states = [
+    null,
+    { phase: 'loading' },
+    { phase: 'missing' },
+    { phase: 'too-old' },
+    { phase: 'no-accounts' },
+    { phase: 'error', error: { message: 'x' } },
+    { phase: 'error' },
+    { phase: 'ok', accounts: [] },
+    { phase: 'ok', accounts: [paceRow] },
+    { phase: 'ok', accounts: [{ ...offRow, active: true }] },
+    { phase: 'ok', accounts: [{ ...rows[3], active: true }], error: { message: 'x' }, fetchedAt: '2026-09-29T09:00:00Z' },
+    { phase: 'ok', accounts: [{ ...rows[3], active: true }], error: { message: 'x' } },
+  ];
+  return { now, rows, states };
+}
+
+function everything(Usage, tr) {
+  const { now, rows, states } = scenarios();
+  const out = [];
+  for (const row of rows) {
+    out.push(Usage.badges(row, tr), Usage.menuLabel(row, now, tr), Usage.label(row, tr), Usage.shortName(row, tr));
+    out.push(Usage.paceNote(row.usage && row.usage.sevenDay, tr));
+  }
+  for (const s of [0, 45, 720, 5400, 7200, 3 * 86400 + 4 * 3600, 86400]) out.push(Usage.formatDuration(s, tr));
+  for (const state of states) {
+    for (const mode of ['5h', '7d', 'both', 'max', 'off']) {
+      const { tooltipLines, ...info } = Usage.trayInfo(state, now, { mode, showName: true }, tr);
+      out.push(info);
+    }
+  }
+  return JSON.parse(JSON.stringify(out));
+}
+
+test('every key usage.js asks for is in the dictionary', () => {
+  const asked = new Set();
+  const recorder = (key, vars) => {
+    asked.add(key);
+    return I18n.translator('en')(key, vars);
+  };
+  everything(U, recorder);
+  const later = local(2, 15, 59);
+  U.trayInfo(lineState({ pct: 1, resetsAt: cswapIso(later) }, { pct: 2, resetsAt: cswapIso(later) }), local(2, 12, 0).getTime(), {}, recorder);
+  const missing = [...asked].filter((key) => !(key in I18n.STRINGS.en));
+  assert.deepEqual(missing, []);
+  assert.ok(asked.size >= 60, `asked for ${asked.size} keys`);
+  for (const key of ['trayTip.session', 'trayTip.week', 'reset.at', 'reset.on', 'menuLine.api_key', 'badge.tip.paceExpected']) assert.ok(asked.has(key), key);
+});
+
+test('as a classic script without i18n.js: one global, and the same English', () => {
+  const alone = {};
+  vm.runInNewContext(USAGE_SRC, alone);
+  assert.deepEqual(Object.keys(alone), ['Usage']);
+  assert.deepEqual(everything(alone.Usage), everything(U), 'the built-in English equals I18n.STRINGS.en');
+  assert.equal(alone.Usage.WARN, 75);
+  assert.equal(alone.Usage.CRIT, 90);
+  // an explicit translator still works; only the reset lines need i18n.js
+  assert.equal(alone.Usage.menuLabel(offRow, NOW, de), '5  e@x  5 Std.: zurückgesetzt  — deaktiviert, Token abgelaufen, veraltet');
+  const later = cswapIso(local(2, 15, 59));
+  const state = lineState({ pct: 20, resetsAt: later }, { pct: 34, resetsAt: later });
+  assert.equal('tooltipLines' in alone.Usage.trayInfo(state, local(2, 12, 0).getTime()), false);
+});
+
+test('as a classic script after i18n.js: it uses window.I18n', () => {
+  const page = {};
+  vm.runInNewContext(I18N_SRC, page);
+  vm.runInNewContext(USAGE_SRC, page);
+  assert.deepEqual(Object.keys(page), ['I18n', 'Usage']);
+  assert.equal(page.Usage.menuLabel(offRow, NOW, 'de'), '5  e@x  5 Std.: zurückgesetzt  — deaktiviert, Token abgelaufen, veraltet');
+  assert.deepEqual(everything(page.Usage), everything(U));
+  const later = cswapIso(local(2, 15, 59));
+  const state = lineState({ pct: 20, resetsAt: later }, { pct: 34, resetsAt: cswapIso(local(6, 9, 5)) });
+  assert.deepEqual(Array.from(page.Usage.trayInfo(state, local(2, 12, 0).getTime(), { locale: 'en-US' }).tooltipLines, plain), ['Session: 20% · resets at 3:59 PM', 'Week: 34% · resets Oct 6']);
 });

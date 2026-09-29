@@ -109,39 +109,64 @@ It is **not** a fork of it.
 
 ## Layout and dev loop
 
-- `main.js`: tray, popover, IPC, timer. `src/service.js`: state + a queue so cswap calls
-  never overlap (refreshes coalesce). `src/shared/usage.js`: pure helpers, loaded by both
-  main (`require`) and the renderer (`<script>`, `window.Usage`). `src/tray-icon.js`: the
-  menu-bar ring, drawn as a raw bitmap (template image below 75 %, amber/red above).
-  `src/settings.js`: `userData/settings.json` (`cswapPath`, `theme`, `refreshSeconds`).
-- `npm test`. `CSWAP_PATH="$PWD/test/fixtures/fake-cswap" npm start` runs the UI on the
-  fake (`FAKE_CSWAP_SCENARIO=default|empty|root|garbage|slow|schema2|old|flood|crash|stubborn|rolled`).
-  `CSW_THEME=light|dark` forces the theme; `CSW_CAPTURE=out.png` saves a screenshot of the
-  popover (plus `out-tray.png`) and quits.
+- `main.js`: entry only (single-instance lock + userData probe, lifecycle, dev switches,
+  `makeContext()`). Modules in `src/main/` each export `attach(ctx)`: `window.js` (popover /
+  widget window, all hardening), `placement.js` (pure), `tray.js`, `menu.js`, `ipc.js`
+  (`fromUi` sender check), `settings-ipc.js`, `history-hook.js`, `notify.js`,
+  `account-menu.js`, `capture.js`. They read `ctx` at call time and talk through `ctx.bus`
+  (in-process): `'setting:<key>' (next, prev)`, `'settings' (next, prev)`, `'refresh:manual'`.
+- `src/service.js`: state + a queue so cswap calls never overlap (refreshes coalesce).
+  `src/cswap.js`: the CLI bridge. `src/settings.js`: `userData/settings.json`, strict
+  `sanitize`, `RENDERER_KEYS` (the only keys the renderer may write), `publicSettings`.
+  `src/history.js`: usage history as JSONL per UTC day in `userData/history/` (32 days).
+- Shared UMD modules (main `require`s them, the renderer loads them with `<script>`):
+  `src/shared/usage.js` (`window.Usage`), `i18n.js` (`window.I18n`, en/ru/uk/de),
+  `stats.js` (`window.Stats`). `src/tray-model.js` (pure) decides the menu-bar picture;
+  `src/renderer/tray-picture.js` paints the Maestro styles on a canvas and sends a PNG back
+  (`tray:image` is positional: `(seq, dataUrl, template)`); `src/tray-icon.js` is the
+  `classic` style and the fallback when the renderer cannot paint.
+- Renderer: classic scripts, each an IIFE exposing one global. CSS in `src/renderer/css/`.
+  Chart.js 4.5.1 is vendored in `src/renderer/vendor/` (`npm run vendor`), loaded lazily.
+- `npm test` (unit, incl. `renderer-static.test.js` = the CSP rules below, and
+  `attribution.test.js`). `npm run e2e [flow…]` drives the real app on the fake cswap
+  (`test/e2e/*.flow.js`, markup knowledge only in `test/e2e/ui.js`); it refuses to spawn any
+  cswap other than the fake. `CSWAP_PATH="$PWD/test/fixtures/fake-cswap" npm start` runs the UI on
+  the fake (`FAKE_CSWAP_SCENARIO=default|empty|root|garbage|slow|schema2|old|flood|crash|stubborn|rolled|drift|nofetchedat|single|noactive`).
+  Dev switches (ignored when packaged where noted): `CSW_THEME`, `CSW_LANG`, `CSW_CAPTURE=out.png`
+  (screenshot + `out-tray.png`, then quit), `CSW_USER_DATA=<dir>` (packaged: ignored),
+  `CSW_VIEW`, `CSW_WINDOW`. Always give captures and e2e a temp `CSW_USER_DATA`.
+- `CSWAP_PATH=/nonexistent` does NOT simulate a missing cswap (discovery falls back to
+  `~/.local/bin/cswap`, the real one): use the e2e `missing` flow.
 - On the user's real accounts only run `list`/`status`; test switching on the fake.
+
+## Renderer rules (enforced by test/renderer-static.test.js)
+
+- The CSP meta in `index.html` never changes. No `style=` / `on…=` attributes in markup, no
+  inline `<script>` bodies. Inline styles only through the CSSOM (`el.style.x`,
+  `setProperty`); never `setAttribute('style')`, `.cssText`, `insertRule`, `<style>` elements.
+- No `innerHTML` / `outerHTML` / `insertAdjacentHTML` / `document.write` / `DOMParser`: cswap
+  strings go in through `textContent` / `title` only. No `eval` / `new Function`.
+- No remote content, fonts or `@import`; no assets from the Maestro repo (their logo is an
+  Anthropic mark).
+- Every file with ported Maestro code carries the attribution header (LICENSE "Third-party
+  code"); `test/attribution.test.js` checks the list.
 
 ## Status
 
-- [x] `src/cswap.js`: binary discovery, version check (min 0.20.0), JSON parsing
-      and error handling, `list` / `status` / `switchTo(num|email|{strategy})`.
-- [x] Unit tests (`node --test`, 100, pass on Node 25 and Electron's Node 24) for cswap.js, the
-      service, shared helpers, settings, tray icon; fake `cswap` in `test/fixtures`
-      (20 / 80 / 95 %, `token_expired`, `disabled`, a 9-min-old measurement).
-- [x] `main.js`: tray with the active account's 5h % and ring, frameless vibrancy popover,
-      IPC (`accounts:get|refresh|switch`, `app:*`), 60 s timer, refresh on wake and on open.
-- [x] `preload.js`: contextBridge `window.api`.
-- [x] Renderer: cards with 5h/7d rings, per-model (scoped) and extra-usage lines, badges,
-      Switch, "Switch to best account", setup / too-old / no-accounts / error screens,
-      error banner over stale data, toast, light/dark.
-- [x] Checked with the fake cswap (screenshots of every screen, switch clicks end to end)
-      and read-only with the real cswap 0.26.0 (Electron 44.4.5).
-- [x] Multi-agent review (2026-09-29), three rounds: 20 + 24 + 10 confirmed findings fixed (Cmd+W
-      destroying the popover, empty-install contract, kill timeouts and SIGKILL escalation, cache
-      age, tray showing outdated %, list rebuilds and focus, reopen via 'activate', stale override
-      screen, default app menu, renderer crash recovery, popover taller than the screen, …).
-- [x] README (install claude-swap first, credits), MIT LICENSE, electron-builder dmg
-      (`npm run dist` → `dist/Claude Swap Widget-<version>-arm64.dmg`, ad-hoc signed,
-      `LSUIElement`; the packaged .app was launched once in capture mode and works).
-- [ ] Try it by hand on the Mac: tray click / blur / positioning, vibrancy, Open at Login,
-      Gatekeeper "Open Anyway" flow from the dmg, `activate` on reopen from Spotlight.
+- [x] MVP: cswap bridge, service queue, tray, popover, setup screens, tests, dmg (see git history).
+- [x] Three multi-agent reviews of the MVP (2026-09-29), all confirmed findings fixed.
+- [x] Tray menu in claude-swap's own style (accounts, Next/Best/Next available, Disable/Enable,
+      copyable Add/Remove, Open cswap Log, Settings).
+- [x] Maestro UI port (plan: waves A–D), 2026-09-29:
+  - [x] A/B: e2e harness (`npm run e2e`), renderer-static + attribution tests, settings keys,
+        i18n (en/ru/uk/de), stats + history cores, tray painter/model, CSS tokens, Chart.js vendored,
+        main.js split into src/main/*.
+  - [x] C: localized menu + settings IPC, tray pictures (Maestro styles, classic fallback),
+        history recording, notifications, desktop widget mode.
+  - [x] D: renderer shell (screens, i18n, pin-as-widget), hero rings (countdown, pace tick,
+        glow, expand rows for models/spend, recharge comet, ring-in-ring style), account bar rows.
+  - [ ] D: statistics view (Today/Week/Month, line/bars/summary).
+  - [ ] Review of the port; README "What it shows" / screenshots; dmg rebuild.
+- [ ] Try it by hand on the Mac: glass/vibrancy, tray pictures on the real menu bar, widget drag,
+      notifications permission, Open at Login, all 4 languages.
 - [ ] Push to github.com/Btvmn/claude-swap-widget and publish the dmg as a release.
