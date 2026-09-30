@@ -297,9 +297,9 @@ npm run dist             # → dist/Claude Swap Widget-<version>-arm64.dmg
   [Claude Usage Widget — *The* Maestro edition](https://github.com/TheMaestr-o/claude-usage-widget)
   by [The Maestro](https://github.com/TheMaestr-o), itself based on
   [Claude Usage Widget](https://github.com/SlavomirDurej/claude-usage-widget)
-  by Slavomir Durej. Both are MIT licensed; the code is used with the
-  author's permission (see [LICENSE](LICENSE)). Its data layer (claude.ai
-  login, session cookie) is not used: every number comes from claude-swap.
+  by Slavomir Durej. Both are MIT licensed (see [LICENSE](LICENSE)). Its
+  data layer (claude.ai login, session cookie) is not used: every number
+  comes from claude-swap.
 - Charts: [Chart.js](https://www.chartjs.org) (MIT), bundled in
   `src/renderer/vendor/`.
 

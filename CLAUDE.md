@@ -23,7 +23,8 @@ It is **not** a fork of it.
   "Open cswap Log" only reveals `~/.claude-swap-backup/claude-swap.log`; we never parse it.
 - UI source: TheMaestr-o/claude-usage-widget, branch `maestro-edition` (MIT, © 2024 Slavomir
   Durej; Maestro edition by The Maestro). Decided 2026-09-29: we may take its visual layer
-  (glass rings, statistics, menu-bar styles, widget window, i18n) — the author agreed. Keep
+  (glass rings, statistics, menu-bar styles, widget window, i18n) under its MIT licence; README
+  and LICENSE do not claim the author's permission (removed 2026-09-30 at the user's request). Keep
   both copyright notices in LICENSE and credit both in README. Take the UI only: its data
   layer (claude.ai login, `sessionKey` cookie, hidden-window fetch) is exactly what this app
   must not do; data still comes from cswap. Amber at 75 %, red at 90 %.
