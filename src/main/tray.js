@@ -73,8 +73,27 @@ function getTray() {
   return tray;
 }
 
+// When the active account's 5h or 7d window rolls over, what the menu bar
+// shows (and what the notifier knows) is outdated at that moment, not at the
+// next refresh: re-run everything that listens to the state then.
+let resetTimer = null;
+function scheduleReset(state, now) {
+  clearTimeout(resetTimer);
+  const active = state && state.phase === 'ok' ? (state.accounts || []).find((a) => a && a.active) : null;
+  const usage = active && (active.usage || active.lastGoodUsage);
+  const next = [usage && usage.fiveHour, usage && usage.sevenDay]
+    .map((w) => (w && w.resetsAt ? Date.parse(w.resetsAt) : NaN))
+    .filter((ms) => Number.isFinite(ms) && ms > now)
+    .sort((a, b) => a - b)[0];
+  if (!next) return;
+  resetTimer = setTimeout(() => {
+    if (!ctx.isQuitting()) ctx.service.emit('state', ctx.service.state);
+  }, Math.min(next - now + 1000, 2 ** 31 - 1));
+}
+
 function update(state = ctx.service.state) {
   if (!tray || tray.isDestroyed()) return;
+  scheduleReset(state, Date.now());
   watchPage();
   const settings = ctx.getSettings();
   const now = Date.now();

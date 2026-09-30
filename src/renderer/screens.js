@@ -86,7 +86,7 @@
     return [
       icon('alert'),
       h('h2', null, t('setup.error.title')),
-      h('p', { class: 'message' }, (s.error && s.error.message) || t('setup.error.unknown')),
+      h('p', { class: 'message', title: s.error ? window.Usage.errorText(s.error, t).detail || null : null }, s.error ? window.Usage.errorText(s.error, t).text : t('setup.error.unknown')),
       h('p', { class: 'path' }, (s.cswap && s.cswap.path) || ''),
       actions(s, api),
     ];

@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld('api', {
   history: {
     accounts: () => ipcRenderer.invoke('history:accounts'),
     get: (key, days) => ipcRenderer.invoke('history:get', key, days),
+    // History was cleared or recording switched: read it again.
+    onChanged: subscribe('history:changed'),
   },
 
   // The menu-bar picture: main asks for a frame, the page paints it on a

@@ -36,6 +36,8 @@ let hiddenAt = 0;
 let wantedHeight = MIN_HEIGHT; // the renderer's natural height; clamped to the display when placed
 let crashTimes = [];
 let shownAt = 0; // when show() last ran; see the blur handler
+let userMoveAt = 0; // last 'will-move' (a user drag); see onMove
+const USER_MOVE_MS = 1500;
 let graceTimer = null;
 const SHOW_GRACE_MS = 400;
 let forcedMode = null; // CSW_WINDOW=widget (dev only; ctx.dev.window)
@@ -89,6 +91,11 @@ function create() {
     },
   });
   win.loadFile(path.join(ROOT, 'src', 'renderer', 'index.html'));
+  // The page needs no browser permissions (no camera, microphone, location,
+  // clipboard reading, …); notifications come from main.
+  win.webContents.session.setPermissionRequestHandler((_wc, _permission, done) => done(false));
+  win.webContents.session.setPermissionCheckHandler(() => false);
+  win.on('will-move', () => (userMoveAt = Date.now()));
   // Also hides the dock icon for good (Electron turns the app into a UI
   // element here); later changes skip that step, see applyOnTop().
   if (mac) win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
@@ -231,7 +238,10 @@ function toggle() {
   if (!alive()) return;
   if (isWidget()) {
     // Visible but on no display (e.g. one was just unplugged) counts as hidden.
-    if (win.isVisible() && isPositionOnScreen(win.getBounds(), workAreas())) hide();
+    // Visible → hide. Except a widget that is not kept on top and not
+    // focused: it may be covered by another app, so bring it forward instead.
+    const onTop = ctx.getSettings().widgetOnTop !== false;
+    if (win.isVisible() && isPositionOnScreen(win.getBounds(), workAreas()) && (onTop || win.isFocused())) hide();
     else show();
     return;
   }
@@ -304,8 +314,11 @@ function onMove() {
   const pos = widgetPosition(win.getPosition());
   if (!pos) return;
   // Where we put it, unless a drag is under way (it may end where it began).
+  // A user drag announces itself with 'will-move' (programmatic moves do not),
+  // so a drag that ends on the spot we last placed it still counts.
+  const dragged = Date.now() - userMoveAt < USER_MOVE_MS;
   const ours = lastPlaced && pos.x === lastPlaced.x && pos.y === lastPlaced.y;
-  if (ours && !saveTimer) return;
+  if (ours && !saveTimer && !dragged) return;
   widgetAnchor = pos;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(savePosition, SAVE_POSITION_MS);

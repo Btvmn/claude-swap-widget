@@ -123,6 +123,30 @@
     return I ? I.translator(typeof t === 'string' ? t : 'en') : fallbackT;
   }
 
+  // Our own error messages in the UI language. err is a CswapError or the
+  // service's plain {kind, message, errorType?, signal?, spawnError?,
+  // exitCode?}. cswap's own text (errorType set: its JSON error envelope, or
+  // its last stderr line) stays as it is; our English is replaced by a key.
+  // Returns { text, detail }: detail is the raw English when it was replaced.
+  const ACCOUNT_GONE = 'That account is no longer in claude-swap; the list has been refreshed';
+  function errorText(err, t) {
+    const tt = tr(t);
+    const raw = String((err && err.message) || '');
+    const kind = err && err.kind;
+    let text = raw || tt('toast.actionFailed');
+    if (raw === ACCOUNT_GONE) text = tt('err.accountGone');
+    else if (kind === 'not-installed') text = tt('err.notAvailable');
+    else if (kind === 'too-old') text = tt('setup.tooOld.title');
+    else if (kind === 'timeout') text = tt('err.timeout');
+    else if (kind === 'bad-output') text = tt('err.badOutput');
+    else if (kind === 'schema') text = tt('err.schema', { v: (/schemaVersion (\S+)/.exec(raw) || [])[1] || '?' });
+    else if (kind === 'invalid') text = tt('err.invalidTarget');
+    else if (kind === 'cli' && err.signal) text = tt('err.stopped', { signal: err.signal });
+    else if (kind === 'cli' && err.spawnError) text = tt('err.spawn', { code: err.spawnError });
+    else if (kind === 'cli' && !err.errorType && /^cswap exited with code \d+$/.test(raw)) text = tt('err.exitCode', { code: err.exitCode });
+    return { text, detail: text === raw ? '' : raw };
+  }
+
   // Judged on the whole number the UI shows, so "75%" is always amber and
   // "90%" always red (the tray picture and the notifier follow the same rule).
   function level(pct) {
@@ -294,7 +318,7 @@
     if (!phase || phase === 'loading') return tray('', null, tt('trayTip.loading'));
     if (phase === 'missing' || phase === 'too-old') return tray('!', null, tt('trayTip.setup'));
     if (phase === 'no-accounts') return tray('', null, tt('trayTip.noAccounts'));
-    if (phase === 'error') return tray('!', null, tt('trayTip.error', { message: (state.error && state.error.message) || tt('setup.error.unknown') }));
+    if (phase === 'error') return tray('!', null, tt('trayTip.error', { message: state.error ? errorText(state.error, tt).text : tt('setup.error.unknown') }));
     const active = (state.accounts || []).find((a) => a.active);
     if (!active) return tray('–', null, tt('trayTip.noActive'));
     const { usage, stale } = effectiveUsage(active);
@@ -384,5 +408,7 @@
     menuLabel,
     orgLabel,
     trayInfo,
+    errorText,
+    ACCOUNT_GONE,
   };
 });

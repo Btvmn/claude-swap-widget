@@ -16,6 +16,7 @@
   let locale = 'en-US';
   let hour12 = true;
   let translate = I18n.translator('en');
+  let applied = false;
 
   function t(key, vars) {
     return translate(key, vars);
@@ -39,7 +40,10 @@
       locale: (settings && settings.locale) || I18n.LOCALES[(settings && settings.language) || 'en'] || 'en-US',
       hour12: settings && typeof settings.hour12 === 'boolean' ? settings.hour12 : true,
     };
-    if (next.lang === lang && next.locale === locale && next.hour12 === hour12) return false;
+    // The first call always applies: the markup's own English has no
+    // tooltips or accessible names until apply() has run once.
+    if (applied && next.lang === lang && next.locale === locale && next.hour12 === hour12) return false;
+    applied = true;
     lang = next.lang;
     locale = next.locale;
     hour12 = next.hour12;
@@ -79,5 +83,6 @@
     locale: () => locale,
     hour12: () => hour12,
     duration: (seconds) => I18n.formatDuration(t, seconds),
+    pct: (p) => t('fmt.pct', { p: Math.round(p) }),
   };
 })();

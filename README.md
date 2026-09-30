@@ -5,8 +5,9 @@ manage with [claude-swap](https://github.com/realiti4/claude-swap), and
 switches between them with one click.
 
 <p>
-  <img src="docs/screenshot-dark.png" width="340" alt="The popover in dark mode: one card per account, each with a 5-hour and a 7-day usage ring and a Switch button">
-  <img src="docs/screenshot-light.png" width="340" alt="The popover in light mode">
+  <img src="docs/screenshot-dark.png" width="300" alt="The popover in dark mode: the active account in two large rings (5-hour session and 7-day week) with countdowns, the other accounts as rows with two thin usage bars and a Switch button">
+  <img src="docs/screenshot-light.png" width="300" alt="The popover in light mode">
+  <img src="docs/screenshot-stats.png" width="300" alt="The statistics view: the last 7 days as a line chart with peak, average, time near the limit and time in use">
 </p>
 
 It is a small UI **on top of** claude-swap, not a fork of it: every account

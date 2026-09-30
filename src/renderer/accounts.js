@@ -70,16 +70,19 @@
     return lvl === 'crit' ? 'is-danger' : lvl === 'warn' ? 'is-warning' : '';
   }
 
-  function bar(win, kind, stale, key) {
+  // A window that rolled over since cswap measured it is outdated, like
+  // last-good data: no warning colour, dimmed (the hero and tray do the same).
+  function bar(win, kind, stale, key, now) {
     const pct = win && typeof win.pct === 'number' ? Math.min(Math.max(win.pct, 0), 100) : null;
-    const cls = ['compact-bar-fill', kind === '7d' ? 'weekly' : '', pct > 0 ? 'has-value' : '', stale ? '' : tone(pct)].filter(Boolean).join(' ');
-    const fill = h('div', { class: cls, 'data-fill': `${key}|${kind}`, 'data-pct': pct === null ? '' : String(pct) });
+    const old = stale || Boolean(win && Usage.resetPassed(win, now));
+    const cls = ['compact-bar-fill', kind === '7d' ? 'weekly' : '', pct > 0 ? 'has-value' : '', old ? 'is-old' : tone(pct)].filter(Boolean).join(' ');
+    const fill = h('div', { class: cls, 'data-fill': `${key}|${kind}`, 'data-pct': pct === null ? '' : String(pct), 'data-resets-at': (win && win.resetsAt) || '' });
     const lvl = Usage.level(pct);
-    const pctText = pct === null ? '—' : `${Math.round(pct)}%`;
+    const pctText = pct === null ? '—' : I18nDom.pct(pct);
     return [
       h('span', { class: 'lbl' }, t(`win.${kind}`)),
       h('div', { class: 'compact-bar-bg' }, fill),
-      h('span', { class: `pct${stale ? '' : lvl === 'crit' ? ' crit' : lvl === 'warn' ? ' warn' : ''}` }, pctText),
+      h('span', { class: `pct${old ? ' old' : lvl === 'crit' ? ' crit' : lvl === 'warn' ? ' warn' : ''}` }, pctText),
     ];
   }
 
@@ -128,7 +131,7 @@
       ),
       pillEls.length ? h('div', { class: 'pills acct-pills' }, pillEls) : null,
       usage
-        ? h('div', { class: 'acct-bars' }, bar(five, '5h', stale, key), bar(usage.sevenDay, '7d', stale, key), reset)
+        ? h('div', { class: 'acct-bars' }, bar(five, '5h', stale, key, now), bar(usage.sevenDay, '7d', stale, key, now), reset)
         : h('p', { class: 'acct-no-usage' }, t('card.noUsage')),
     );
   }
@@ -189,6 +192,15 @@
     for (const el of listEl.querySelectorAll('.acct-reset')) {
       const at = el.dataset.resetsAt;
       el.textContent = at ? resetText({ resetsAt: at }, now) : '';
+    }
+    // A window that has just rolled over: dim its bar until the next refresh.
+    for (const f of listEl.querySelectorAll('.compact-bar-fill[data-resets-at]:not(.is-old)')) {
+      if (f.dataset.resetsAt && Usage.resetPassed({ resetsAt: f.dataset.resetsAt }, now)) {
+        f.classList.remove('is-warning', 'is-danger');
+        f.classList.add('is-old');
+        const pct = f.parentNode.nextElementSibling;
+        if (pct) pct.className = 'pct old';
+      }
     }
   }
 

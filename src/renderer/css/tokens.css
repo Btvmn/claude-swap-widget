@@ -89,13 +89,13 @@
   --pill-fill: var(--field);
   --pill-edge: var(--hairline);
   --pill-ink: var(--ink-2);
-  --pill-warn-fill: color-mix(in srgb, var(--warn) 12%, transparent);
+  --pill-warn-fill: color-mix(in srgb, var(--warn) 16%, transparent);
   --pill-warn-edge: color-mix(in srgb, var(--warn) 35%, transparent);
   --pill-warn-ink: #a64a00;
-  --pill-crit-fill: color-mix(in srgb, var(--danger) 10%, transparent);
+  --pill-crit-fill: color-mix(in srgb, var(--danger) 14%, transparent);
   --pill-crit-edge: color-mix(in srgb, var(--danger) 30%, transparent);
   --pill-crit-ink: #c40013;
-  --pill-accent-fill: color-mix(in srgb, var(--accent) 14%, transparent);
+  --pill-accent-fill: color-mix(in srgb, var(--accent) 16%, transparent);
   --pill-accent-edge: color-mix(in srgb, var(--accent) 36%, transparent);
   --pill-accent-ink: #005ebd;
 

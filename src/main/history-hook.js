@@ -56,7 +56,10 @@ function record(state) {
 // logged about it).
 function clear() {
   lastProblem = null;
-  if (!store.clear()) throw new Error(lastProblem || 'Some history files could not be deleted');
+  const ok = store.clear();
+  // An open statistics view must not keep showing what was deleted.
+  ctx.send('history:changed');
+  if (!ok) throw new Error(lastProblem || 'Some history files could not be deleted');
 }
 
 // history:get(key, days): a key the page got from history:accounts, and a
@@ -128,6 +131,7 @@ function attach(context) {
   ctx.bus.on('setting:recordHistory', (on) => {
     if (on) store.resume();
     else store.flush();
+    ctx.send('history:changed');
   });
   ctx.bus.on('history:clear', clear);
   // lastSeen changes wait for a new UTC day; write them before quitting.

@@ -45,6 +45,7 @@ const SUBSCRIBE = [
   ['onSettings', 'settings:changed'],
   ['onTrayDraw', 'tray:draw'],
   ['onOpen', 'ui:open'],
+  ['history.onChanged', 'history:changed'],
 ];
 
 // A stub of what a sandboxed preload may use from electron, recording every call.
@@ -104,7 +105,7 @@ test('window.api has exactly the PLAN §7 names', () => {
   const { api } = load();
   const top = [...INVOKE, ...SEND, ...SUBSCRIBE].map(([name]) => name.split('.')[0]);
   assert.deepEqual(Object.keys(api).sort(), [...new Set(top)].sort());
-  assert.deepEqual(Object.keys(api.history).sort(), ['accounts', 'get']);
+  assert.deepEqual(Object.keys(api.history).sort(), ['accounts', 'get', 'onChanged']);
   for (const [name] of [...INVOKE, ...SEND, ...SUBSCRIBE]) {
     assert.equal(typeof pick(api, name), 'function', name);
   }
@@ -142,8 +143,8 @@ test('subscriptions: the payload only, never the IPC event; the return value uns
     const { api, listeners, emit } = load();
     const got = [];
     const other = [];
-    const off = api[name]((...args) => got.push(args));
-    api[name]((...args) => other.push(args));
+    const off = pick(api, name)((...args) => got.push(args));
+    pick(api, name)((...args) => other.push(args));
     assert.equal(listeners.get(channel).size, 2, `${name} listens on ${channel}`);
     const event = { sender: { send() {} }, senderFrame: {}, ports: [] };
     emit(channel, event, { n: 1 }, 'ignored');

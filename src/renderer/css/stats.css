@@ -1,9 +1,401 @@
 /*
  * Adapted from Claude Usage Widget — The Maestro edition
- * (github.com/TheMaestr-o/claude-usage-widget @ b79d4b1, src/renderer/styles.css:3046-3227).
+ * (github.com/TheMaestr-o/claude-usage-widget @ b79d4b1, src/renderer/styles.css:2384-2401,
+ * 3046-3274).
  * Copyright (c) 2024 Slavomir Durej; Maestro edition (c) 2026 The Maestro.
  * MIT licence; see LICENSE, "Third-party code".
  */
 
-/* Placeholder until P3.5. */
-.stats-section { padding: 0 16px 12px; }
+/*
+ * The statistics view (#stats, built by stats-view.js). It replaces the hero,
+ * the rows and the footer (window.css) and is the one region that scrolls
+ * when the window is at its cap. Their section was 590 px wide with a fixed
+ * height; ours is the 360 px popover, sized by its content: the chart box has
+ * a fixed height (Chart.js sizes itself to its parent), the rest is natural.
+ *
+ * Colours come from tokens.css. The chart reads --chart-* in JS; the
+ * sparklines and the heat strip use them here, so a theme change needs no
+ * render for the summary look. No image URLs: the select's chevron is a border.
+ */
+
+.stats-section {
+  padding: 2px 16px 14px;
+}
+
+.stats-section:not([hidden]) {
+  animation: reveal 0.35s var(--ease);
+}
+
+/* ── head: title + period ────────────────────────────────────────── */
+
+.stats-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 26px;
+}
+
+.stats-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── tools: account picker + look ────────────────────────────────── */
+
+.stats-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.stats-select {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+
+.stats-select select {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  margin: 0;
+  padding: 0 26px 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--field);
+  color: var(--ink);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.stats-select select:hover {
+  background-color: var(--field-hover);
+}
+
+/* Their chevron was an SVG data URI per theme; a rotated border follows the ink. */
+.stats-select::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 11px;
+  width: 5px;
+  height: 5px;
+  margin-top: -4px;
+  border-right: 1.6px solid var(--ink-2);
+  border-bottom: 1.6px solid var(--ink-2);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.stats-select option,
+.stats-select optgroup {
+  background: var(--sheet);
+  color: var(--ink);
+}
+
+/* ── segmented controls (period, look) ───────────────────────────── */
+
+.segmented {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--field);
+}
+
+.segment-btn {
+  height: 22px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.segment-btn:hover {
+  color: var(--ink);
+}
+
+.segment-btn.active {
+  background: var(--segment);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+}
+
+/* The ring sits on the segment, not over its neighbours. */
+.segment-btn:focus-visible {
+  outline-offset: -2px;
+}
+
+.glyph-btn {
+  width: 34px;
+  padding: 0;
+}
+
+.glyph-btn svg {
+  display: block;
+}
+
+/* ── body ────────────────────────────────────────────────────────── */
+
+.stats-body {
+  position: relative;
+  margin-top: 12px;
+}
+
+.stats-chart {
+  position: relative;
+  height: 170px;
+}
+
+.stats-chart canvas {
+  display: block;
+}
+
+/* Their row of figures, with the gap cut for 360 px; long labels shrink. */
+.stats-summary {
+  display: flex;
+  gap: 18px;
+  margin-top: 10px;
+}
+
+.stats-item {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stats-item-label {
+  color: var(--ink-2);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stats-item-value {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stats-cards,
+.stats-heat,
+.stats-empty {
+  display: none;
+}
+
+/* ── summary look: three cards and the heat strip ───────────────── */
+
+.stats-section[data-style='summary'] .stats-chart,
+.stats-section[data-style='summary'] .stats-summary {
+  display: none;
+}
+
+.stats-section[data-style='summary'] .stats-body {
+  margin-top: 14px;
+}
+
+.stats-section[data-style='summary'] .stats-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stats-section[data-style='summary'] .stats-heat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.stats-card {
+  height: 84px;
+  min-width: 0;
+  padding: 10px 11px 9px;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  border-radius: 12px;
+  background: var(--group);
+}
+
+.stats-card-label {
+  color: var(--ink-2);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 21 px in their 590 px window; 17 px keeps "9 h 40 m" inside a third of 328 px. */
+.stats-card-value {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A duration: the numbers at the value size, the units ("h", "Std.") smaller. */
+.stats-card-value.is-duration {
+  font-size: 12.5px;
+  letter-spacing: 0;
+}
+
+.stats-card-value.is-duration .num {
+  font-size: 1.36em;
+  letter-spacing: -0.02em;
+}
+
+.stats-spark {
+  display: block;
+  width: 100%;
+  height: 22px;
+  margin-top: auto;
+  overflow: visible;
+}
+
+.stats-spark path {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.stats-spark.s5h path {
+  stroke: var(--chart-5h);
+}
+
+.stats-spark.s7d path {
+  stroke: var(--chart-7d);
+}
+
+.stats-heat-label {
+  flex: none;
+  min-width: 44px;
+  color: var(--ink-2);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.stats-heat-cells {
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  height: 18px;
+}
+
+.heat-cell {
+  min-width: 0;
+  border-radius: 4px;
+  background: var(--track);
+}
+
+/* The tint grows with the bucket's peak: 16 % at 0 %, full at 100 % (--heat). */
+.heat-cell.has-value {
+  background: color-mix(in srgb, var(--chart-7d) var(--heat, 16%), transparent);
+}
+
+/* Not measured (theirs drew it like 0 %): an outline only. */
+.heat-cell.none {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--track);
+}
+
+.heat-cell.future {
+  opacity: 0.4;
+}
+
+.heat-cell.current {
+  box-shadow: inset 0 0 0 1px var(--weekly);
+}
+
+/* ── empty and loading ──────────────────────────────────────────── */
+
+/* The body keeps its height, so the window does not jump. */
+.stats-section.is-empty .stats-chart,
+.stats-section.is-empty .stats-summary,
+.stats-section.is-empty .stats-cards,
+.stats-section.is-empty .stats-heat {
+  visibility: hidden;
+}
+
+.stats-section.is-empty .stats-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 12px;
+  text-align: center;
+}
+
+.stats-section.is-loading .stats-empty {
+  visibility: hidden;
+}
+
+.stats-empty-text {
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.stats-empty-hint {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+/* ── note: coverage, history off ────────────────────────────────── */
+
+.stats-note {
+  margin-top: 10px;
+  color: var(--ink-3);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Flat, like the pills and buttons; "Increase contrast" gets the edges back. */
+@media (prefers-contrast: more) {
+  .stats-select select,
+  .stats-card {
+    border: 0.5px solid var(--hairline);
+  }
+}

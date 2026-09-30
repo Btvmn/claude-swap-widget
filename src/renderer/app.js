@@ -41,6 +41,7 @@
     menu: $('menu'),
     banner: $('banner'),
     screen: $('screen'),
+    content: $('content'),
     hero: $('hero'),
     accounts: $('accounts'),
     list: $('acctList'),
@@ -128,13 +129,16 @@
 
   function renderChrome(s) {
     const active = s.phase === 'ok' ? s.accounts.find((a) => a.active) : null;
-    els.title.textContent = active ? Usage.label(active, t) : s.phase === 'ok' ? t('hero.noActive') : t('app.title');
+    // With no active account the hero says so; the title stays the app's.
+    els.title.textContent = active ? Usage.label(active, t) : t('app.title');
     els.subtitle.textContent = subtitle(s, active);
     els.refresh.classList.toggle('spinning', Boolean(s.refreshing || s.switching));
     els.refresh.disabled = !['ok', 'no-accounts', 'error'].includes(s.phase);
-    const bannerText = s.phase === 'ok' && s.error ? t('banner.refreshFailed', { message: s.error.message }) : '';
+    const err = s.phase === 'ok' && s.error ? Usage.errorText(s.error, t) : null;
+    const bannerText = err ? t('banner.refreshFailed', { message: err.text }) : '';
     els.banner.hidden = !bannerText;
     els.banner.textContent = bannerText;
+    els.banner.title = err ? err.detail : '';
     const widget = settings.windowMode === 'widget';
     els.pin.setAttribute('aria-pressed', String(widget));
     const pinTip = t(widget ? 'btn.unpin' : 'btn.pin');
@@ -242,9 +246,13 @@
   // It shrinks as well as grows (nothing stretches to fill the window).
   let lastHeight = 0;
   function fit() {
-    const scroller = [els.screen, els.accounts, els.stats].find((x) => !x.hidden) || null;
+    // Skip what CSS hides (body.view-stats hides #accounts without `hidden`).
+    const scroller = [els.screen, els.accounts, els.stats].find((x) => !x.hidden && x.getClientRects().length > 0) || null;
     const hidden = scroller ? scroller.scrollHeight - scroller.clientHeight : 0;
-    const natural = Math.ceil(els.app.getBoundingClientRect().height + Math.max(0, hidden));
+    // Plus what overflows #content itself (the hero never shrinks): with no
+    // scroller (one account) a window opened shorter than the hero never grew.
+    const over = els.content.scrollHeight - els.content.clientHeight;
+    const natural = Math.ceil(els.app.getBoundingClientRect().height + Math.max(0, hidden) + Math.max(0, over));
     if (Math.abs(natural - lastHeight) < 1) return;
     lastHeight = natural;
     ipc.resize(natural);
@@ -280,13 +288,15 @@
         let msg = res.switched ? t('toast.switchedTo', { name: targetName(res.to) }) : reasonText(res);
         const changed = res.switched && clickedEmail && res.to && res.to.email && res.to.email !== clickedEmail;
         if (changed) msg = t('toast.listChanged', { message: msg });
-        const warnings = Array.isArray(res.warnings) && res.warnings.length ? res.warnings.join(' ') : '';
-        toast({ text: msg, error: Boolean(changed), detail: warnings || res.message || '' });
+        // cswap's warnings are for the user: shown, as main's menu toasts do.
+        const warnings = Array.isArray(res.warnings) && res.warnings.length ? ` — ${res.warnings.join(' ')}` : '';
+        toast({ text: msg + warnings, error: Boolean(changed), detail: res.message || '' });
       } else {
-        toast({ text: (r.error && r.error.message) || t('toast.switchFailed'), error: true });
+        const e = r.error ? Usage.errorText(r.error, t) : { text: t('toast.switchFailed'), detail: '' };
+        toast({ text: e.text, error: true, detail: e.detail });
       }
     } catch (err) {
-      toast({ text: (err && err.message) || t('toast.switchFailed'), error: true });
+      toast({ text: t('toast.switchFailed'), error: true, detail: (err && err.message) || '' });
     } finally {
       setBusy(false);
     }
@@ -320,8 +330,16 @@
 
   // ── statistics ──────────────────────────────────────────────────
 
+  // An open asked for before the first list (CSW_VIEW=stats, an early
+  // ui:open) waits for the first 'ok' state instead of being dropped.
+  let pendingOpen = null;
+
   function openStats(opts) {
-    if (!state || state.phase !== 'ok') return;
+    if (!state || state.phase !== 'ok') {
+      pendingOpen = opts || {};
+      return;
+    }
+    pendingOpen = null;
     view = 'stats';
     els.stats.hidden = false;
     if (window.StatsView && typeof window.StatsView.open === 'function') window.StatsView.open(els.stats, context(), opts || {});
@@ -330,6 +348,7 @@
   }
 
   function closeStats() {
+    pendingOpen = null;
     view = 'accounts';
     if (window.StatsView && typeof window.StatsView.close === 'function') window.StatsView.close();
     render();
@@ -395,10 +414,12 @@
       state = s;
       if (wasBusy && !s.refreshing && !s.switching) manualRefresh = false;
       render();
+      if (pendingOpen && s.phase === 'ok') openStats(pendingOpen);
     });
     applySettings(await ipc.getSettings());
     state = await ipc.getState();
     render();
     if (info.captureView === 'stats') openStats();
+    else if (pendingOpen && state && state.phase === 'ok') openStats(pendingOpen);
   })();
 })();

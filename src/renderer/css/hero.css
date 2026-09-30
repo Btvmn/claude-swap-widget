@@ -253,13 +253,16 @@
   white-space: nowrap;
 }
 
-.gauge.is-idle .gauge-countdown {
+.gauge.is-idle .gauge-countdown,
+.gauge.is-resetting .gauge-countdown {
   color: var(--ink-3);
   font-size: 15px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.gauge-reset,
-.gauge-pace {
+.gauge-reset {
   color: var(--ink-3);
   font-size: 11.5px;
   white-space: nowrap;
@@ -268,8 +271,13 @@
   max-width: 100%;
 }
 
+/* May take two lines (uk / de are long); it never gets cut. */
 .gauge-pace {
+  max-width: 100%;
   color: var(--warn-ink);
+  font-size: 11.5px;
+  line-height: 1.3;
+  text-align: center;
 }
 
 /* The number beside the rings exists for the ring-in-ring look only (P3.7). */
@@ -316,7 +324,9 @@ body.recharging .gauge-meta-pct {
   transition: none !important;
 }
 
-body.recharging .gauge .ring-usage {
+/* No breathing glow in flight; a ring that has landed may pulse while the
+   other one is still on its way. */
+body.recharging .gauge:not(.landed) .ring-usage {
   animation: none;
 }
 
@@ -534,7 +544,7 @@ body.gauges-b .gauge.is-idle .gauge-countdown {
 
 .extra-row {
   display: grid;
-  grid-template-columns: minmax(0, 96px) minmax(0, 1fr) 34px minmax(56px, auto);
+  grid-template-columns: minmax(0, max-content) minmax(36px, 1fr) auto minmax(52px, auto);
   align-items: center;
   column-gap: 8px;
   min-height: 22px;

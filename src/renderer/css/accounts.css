@@ -152,9 +152,14 @@
   opacity: 0.55;
 }
 
-/* Last good data only. */
-.acct.is-stale .compact-bar-fill {
+/* Last good data only, or a window that has rolled over since. */
+.acct.is-stale .compact-bar-fill,
+.compact-bar-fill.is-old {
   opacity: 0.45;
+}
+
+.acct-bars .pct.old {
+  color: var(--ink-3);
 }
 
 /* ── the sweep while cswap works ─────────────────────────────────── */

@@ -249,13 +249,16 @@ function restartTimer() {
 // ── About ────────────────────────────────────────────────────────────────────
 
 // The version comes from package.json: under a test harness app.getVersion()
-// is Electron's own. The credits follow the UI language.
+// is Electron's own. The credits follow the UI language. electron-builder
+// drops the "build" section from the packaged package.json, so the copyright
+// has a fallback of its own.
+const COPYRIGHT = 'Copyright © 2026 claude-swap-widget contributors';
 function aboutOptions() {
   return {
-    applicationName: pkg.productName,
+    applicationName: pkg.productName || 'Claude Swap Widget',
     applicationVersion: pkg.version,
     version: pkg.version,
-    copyright: pkg.build.copyright,
+    copyright: (pkg.build && pkg.build.copyright) || COPYRIGHT,
     credits: `${ctx.t('about.credits')}\n${ctx.t('about.cswap')}`,
   };
 }

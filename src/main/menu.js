@@ -15,7 +15,8 @@ const fs = require('fs');
 const path = require('path');
 const pkg = require('../../package.json');
 const settingsLists = require('../settings');
-const { menuLabel } = require('../shared/usage');
+const Usage = require('../shared/usage');
+const { menuLabel } = Usage;
 const { LANGUAGES, formatDay } = require('../shared/i18n');
 const { isExecutable, cswapLogPath } = require('../cswap');
 
@@ -40,7 +41,6 @@ const REASONS = new Set([
   'usage-unavailable',
 ]);
 // service.js throws this one for a switch or disable whose account left the list.
-const ACCOUNT_GONE = 'That account is no longer in claude-swap; the list has been refreshed';
 
 let ctx = null;
 
@@ -211,21 +211,9 @@ function switchToast(result, clickedEmail) {
 // What went wrong, in the UI language where we know the case (`kind`, or one
 // of our own messages); cswap's own words (a JSON error, a stderr line) are
 // shown as they are, since only cswap knows them. `detail` is the raw message.
+// Our own error messages in the UI language (shared with the page).
 function errorText(err) {
-  const { t } = ctx;
-  const raw = String((err && err.message) || '');
-  const kind = err && err.kind;
-  let text = raw || t('toast.actionFailed');
-  if (raw === ACCOUNT_GONE) text = t('err.accountGone');
-  else if (kind === 'not-installed') text = t('err.notAvailable');
-  else if (kind === 'too-old') text = t('setup.tooOld.title');
-  else if (kind === 'timeout') text = t('err.timeout');
-  else if (kind === 'bad-output') text = t('err.badOutput');
-  else if (kind === 'schema') text = t('err.schema', { v: (/schemaVersion (\S+)/.exec(raw) || [])[1] || '?' });
-  else if (kind === 'cli' && err.signal) text = t('err.stopped', { signal: err.signal });
-  else if (kind === 'cli' && err.spawnError) text = t('err.spawn', { code: err.spawnError });
-  else if (kind === 'cli' && !err.errorType && /^cswap exited with code \d+$/.test(raw)) text = t('err.exitCode', { code: err.exitCode });
-  return { text, detail: text === raw ? '' : raw };
+  return Usage.errorText(err, ctx.t);
 }
 
 // Menu actions report back through a toast in the popover; when the popover
@@ -265,8 +253,15 @@ function toast(text, error = false, detail = '') {
 
 // Add and remove stay in claude-swap's hands: they can prompt, and remove
 // cannot be undone. We show the command and offer to copy it.
+// A menu-bar app is not active when its tray menu is used: bring it forward
+// so a dialog or panel opens in front, not behind other windows.
+function bringForward() {
+  if (process.platform === 'darwin') ctx.app.focus({ steal: true });
+}
+
 async function showCommand(title, detail, command) {
   const { t } = ctx;
+  bringForward();
   ctx.setKeepOpen(true);
   try {
     const r = await dialog.showMessageBox({
@@ -314,6 +309,7 @@ function openStats(account) {
 // clearing ('history:clear'); without one there is nothing to report.
 async function confirmClearHistory() {
   const { t } = ctx;
+  bringForward();
   ctx.setKeepOpen(true);
   let r;
   try {
@@ -351,6 +347,7 @@ async function chooseBinary() {
     if (process.platform === 'darwin') app.show();
     return service.state;
   }
+  bringForward();
   ctx.setKeepOpen(true);
   let picked = null;
   try {

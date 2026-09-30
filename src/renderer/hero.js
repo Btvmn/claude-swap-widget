@@ -139,6 +139,7 @@
       const secs = w.resetsAt && !Usage.resetPassed(w, now) ? Usage.secondsUntil(w.resetsAt, now) : null;
       rows.push({
         key: `model|${w.name || '?'}`,
+        resetsAt: w.resetsAt || null,
         label: t('model.week', { name: w.name || '?' }),
         pct: w.pct,
         side: secs == null ? '' : I18nDom.duration(secs),
@@ -175,7 +176,7 @@
         const pct = r.pct === null ? null : Math.min(Math.max(r.pct, 0), 100);
         const lvl = Usage.level(pct);
         const fill = h('div', { class: `progress-fill${lvl === 'crit' ? ' danger' : lvl === 'warn' ? ' warning' : ''}`, 'data-fill': r.key, 'data-pct': pct === null ? '0' : String(pct) });
-        const side = h('span', { class: 'extra-side' });
+        const side = h('span', { class: 'extra-side', 'data-resets-at': r.resetsAt || null });
         if (r.spend) {
           I18nDom.fillPhrase(side, 'spend.of', { used: [r.spend.used, r.spend.over ? 'spend-used over' : 'spend-used'], limit: [r.spend.limit, 'spend-limit'] });
         } else {
@@ -186,7 +187,7 @@
           { class: 'extra-row', title: r.tip || null },
           h('span', { class: 'extra-label' }, r.label),
           h('div', { class: 'progress-bar' }, fill),
-          h('span', { class: `extra-pct${lvl === 'crit' ? ' crit' : lvl === 'warn' ? ' warn' : ''}` }, pct === null ? '—' : `${Math.round(pct)}%`),
+          h('span', { class: `extra-pct${lvl === 'crit' ? ' crit' : lvl === 'warn' ? ' warn' : ''}` }, pct === null ? '—' : I18nDom.pct(pct)),
           side,
         );
       }),
@@ -437,7 +438,9 @@
   // The ring starts to grow: its colour and number go with it.
   function release(r, countMs) {
     r.released = true;
-    if (r.pendingCls) applyClasses(r.g, r.pendingCls);
+    // The ring is still landing: keep the arc drawn even when it lands on 0
+    // (land() settles has-value).
+    if (r.pendingCls) applyClasses(r.g, { ...r.pendingCls, 'has-value': true });
     r.pendingCls = null;
     animatePercent(r.g.num, r.shown, countMs);
     animatePercent(r.g.metaPct, r.shown, countMs);
@@ -489,9 +492,13 @@
     }
     g.countdown.title = '';
     const left = Date.parse(win.resetsAt) - now;
+    g.el.classList.toggle('is-resetting', !(left > 0));
     if (!(left > 0)) {
+      // The window rolled over; the new numbers come with the next refresh.
+      // The explanation is a tooltip: it does not fit under a ring.
       g.countdown.textContent = t('timer.resetting');
-      g.reset.textContent = t('ring.tip.hasReset');
+      g.countdown.title = t('ring.tip.hasReset');
+      g.reset.textContent = t('ring.now');
       g.time.style.strokeDashoffset = '0';
       return;
     }
@@ -552,6 +559,8 @@
       parts.empty.firstChild.textContent = t('hero.noActive');
       parts.empty.lastChild.textContent = t('hero.noActiveHint');
       paintExtra([], false);
+      extraSig = null; // the next account redraws its "more limits"
+      parts.status.parentNode.classList.remove('has-pills');
       stopRecharge();
       return;
     }
@@ -574,7 +583,7 @@
     parts.noUsage.textContent = hasUsage ? '' : t('card.noUsageHint');
     paintGauge(parts.session, usage && usage.fiveHour, stale, now);
     paintGauge(parts.weekly, usage && usage.sevenDay, stale, now);
-    const sig = JSON.stringify([extraRows(usage, now).map((r) => [r.key, r.pct === null ? null : Math.round(r.pct), r.spend || null]), expanded, I18nDom.lang()]);
+    const sig = JSON.stringify([extraRows(usage, now).map((r) => [r.key, r.pct === null ? null : Math.round(r.pct), r.spend || null, r.resetsAt || null]), expanded, I18nDom.lang(), I18nDom.locale(), I18nDom.hour12()]);
     if (sig !== extraSig) {
       extraSig = sig;
       paintExtra(extraRows(usage, now), expanded);
@@ -583,6 +592,12 @@
 
   function tick(now) {
     if (!parts || !current) return;
+    // "More limits": the model rows count down too.
+    for (const el of parts.extra.querySelectorAll('.extra-side[data-resets-at]')) {
+      const at = el.dataset.resetsAt;
+      const secs = Usage.resetPassed({ resetsAt: at }, now) ? null : Usage.secondsUntil(at, now);
+      el.textContent = secs == null ? t('ring.now') : I18nDom.duration(secs);
+    }
     for (const g of [parts.session, parts.weekly]) {
       const before = g.el.classList.contains('is-stale');
       paintTime(g, now);

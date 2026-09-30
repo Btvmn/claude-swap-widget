@@ -86,6 +86,11 @@ It is **not** a fork of it.
   looks up the current slot number in a fresh `list` right before `switch` (`cswap move` can
   renumber slots under the popover).
 - The popover must never be destroyed: `close` (Cmd+W) hides it unless the app is quitting.
+- The packaged app's `package.json` has no `"build"` section (electron-builder strips it): never
+  read `pkg.build.*` without a fallback (`test/packaging.test.js`). Check a new build by launching
+  `dist/mac-arm64/Claude Swap Widget.app/Contents/MacOS/Claude Swap Widget` with `CSW_CAPTURE`.
+  Do not run `npx @electron/asar extract-file` in the repo root: it writes the file into the
+  current directory (it once overwrote our package.json).
 - Keep the renderer sandboxed: `contextIsolation: true`, `nodeIntegration: false`,
   and expose only a small API through preload.
 - `window.api` from contextBridge is a non-configurable global: a top-level `const api`
@@ -165,8 +170,12 @@ It is **not** a fork of it.
         history recording, notifications, desktop widget mode.
   - [x] D: renderer shell (screens, i18n, pin-as-widget), hero rings (countdown, pace tick,
         glow, expand rows for models/spend, recharge comet, ring-in-ring style), account bar rows.
-  - [ ] D: statistics view (Today/Week/Month, line/bars/summary).
-  - [ ] Review of the port; README "What it shows" / screenshots; dmg rebuild.
+  - [x] D: statistics view (Today/Week/Month, line/bars/summary), Chart.js lazy-loaded.
+  - [x] Review of the port (3 reviewers + adversarial verification): 20 confirmed findings fixed
+        (per-account ⋯ menu handler, localized errors in the page and tray, rolled-over windows in
+        rows, expand-row ticks, comet on 0 %, permission handler, reset-time tray refresh, …).
+  - [x] Flat look: no outlines on pills, capsule buttons, command rows, toast, banner, stats
+        cards (they come back under "Increase contrast"). README + screenshots updated.
 - [ ] Try it by hand on the Mac: glass/vibrancy, tray pictures on the real menu bar, widget drag,
       notifications permission, Open at Login, all 4 languages.
 - [ ] Push to github.com/Btvmn/claude-swap-widget and publish the dmg as a release.
