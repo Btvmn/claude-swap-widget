@@ -65,6 +65,12 @@
     },
     "dmg": {
       "title": "${productName} ${version}"
+    },
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "onlyLoadAppFromAsar": true
     }
   },
   "devDependencies": {

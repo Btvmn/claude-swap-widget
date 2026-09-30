@@ -479,15 +479,29 @@
     document.body.classList.remove('recharging');
   }
 
+  // Writes that would not change anything are skipped: paintTime runs every
+  // second, and each write costs a style pass and a repaint.
+  function setText(el, text) {
+    if (el.textContent !== text) el.textContent = text;
+  }
+
+  // The time arc in 0.1 px steps (a 5-hour window moves one step in about 9 s).
+  function setArc(el, offset) {
+    const v = Math.round(offset * 10) / 10;
+    if (el._arc === v) return;
+    el._arc = v;
+    el.style.strokeDashoffset = String(v);
+  }
+
   // Countdown, reset time and the thin time arc (share of the window gone by).
   function paintTime(g, now) {
     const win = g.window;
     const s = current && current.settings ? current.settings : {};
     if (!win || !win.resetsAt) {
-      g.countdown.textContent = t('timer.notStarted');
+      setText(g.countdown, t('timer.notStarted'));
       g.countdown.title = t('timer.notStartedHint');
-      g.reset.textContent = '';
-      g.time.style.strokeDashoffset = String(C_TIME);
+      setText(g.reset, '');
+      setArc(g.time, C_TIME);
       return;
     }
     g.countdown.title = '';
@@ -496,21 +510,23 @@
     if (!(left > 0)) {
       // The window rolled over; the new numbers come with the next refresh.
       // The explanation is a tooltip: it does not fit under a ring.
-      g.countdown.textContent = t('timer.resetting');
+      setText(g.countdown, t('timer.resetting'));
       g.countdown.title = t('ring.tip.hasReset');
-      g.reset.textContent = t('ring.now');
-      g.time.style.strokeDashoffset = '0';
+      setText(g.reset, t('ring.now'));
+      setArc(g.time, 0);
       return;
     }
-    g.countdown.textContent = countdown(left, g.win === '5h');
+    setText(g.countdown, countdown(left, g.win === '5h'));
     const locale = I18nDom.locale();
-    g.reset.textContent =
+    setText(
+      g.reset,
       g.win === '5h'
         ? t('reset.at', { time: window.I18n.formatClock(locale, win.resetsAt, I18nDom.hour12()) })
-        : t('reset.on', { date: window.I18n.formatDay(locale, win.resetsAt, s.weeklyDateFormat || 'date', I18nDom.hour12()) });
+        : t('reset.on', { date: window.I18n.formatDay(locale, win.resetsAt, s.weeklyDateFormat || 'date', I18nDom.hour12()) }),
+    );
     const total = WINDOW_MIN[g.win] * 60 * 1000;
     const elapsed = Math.min(1, Math.max(0, (total - left) / total));
-    g.time.style.strokeDashoffset = String(C_TIME * (1 - elapsed));
+    setArc(g.time, C_TIME * (1 - elapsed));
   }
 
   // '1:47:12' for the 5-hour window (ticks every second); '3d 4h' for days.

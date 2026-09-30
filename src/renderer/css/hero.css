@@ -166,12 +166,14 @@
   opacity: 0.55;
 }
 
-/* Window time stays calm: the end of a window is a reset, not an alarm. */
+/* Window time stays calm: the end of a window is a reset, not an alarm.
+   No transition: the arc moves a fraction of a pixel per second, and a
+   1 s transition restarted every second repainted the window without end
+   (about a fifth of a CPU core for a desktop widget). hero.js steps it. */
 .ring-time {
   stroke: var(--time);
   stroke-width: 2.5;
   stroke-linecap: round;
-  transition: stroke-dashoffset 1s linear;
   transform-box: fill-box;
   transform-origin: center;
 }
@@ -285,13 +287,17 @@
   display: none;
 }
 
-/* At thresholds: a soft breathing glow, never blinking. Hero only. */
+/* At thresholds: three soft breaths when a ring gets there (or lands after a
+   refresh), then a steady glow. Hero only. Never an endless loop: a filter
+   animation repaints every frame, and the desktop widget is always on screen. */
 .gauge.is-warning .ring-usage {
-  animation: glow-warn 2.8s ease-in-out infinite;
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--warn) 25%, transparent));
+  animation: glow-warn 2.8s ease-in-out 3;
 }
 
 .gauge.is-danger .ring-usage {
-  animation: glow-danger 2.2s ease-in-out infinite;
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--danger) 30%, transparent));
+  animation: glow-danger 2.2s ease-in-out 3;
 }
 
 /* Last good data or a window that has rolled over: dim, dashed track, no glow. */
@@ -524,7 +530,7 @@ body.gauges-b .gauge.is-idle .gauge-countdown {
   stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
-  transition: transform 0.35s cubic-bezier(0.22, 0.9, 0.24, 1), stroke 0.2s ease;
+  transition: transform 0.22s var(--ease), stroke 0.2s ease;
 }
 
 .expand-toggle:hover .expand-arrow {
@@ -539,7 +545,7 @@ body.gauges-b .gauge.is-idle .gauge-countdown {
   margin-top: 4px;
   padding: 8px 4px 0;
   border-top: 0.5px solid var(--track);
-  animation: reveal 0.35s cubic-bezier(0.22, 0.9, 0.24, 1);
+  animation: reveal 0.22s var(--ease);
 }
 
 .extra-row {

@@ -80,10 +80,13 @@ function usageWindow(pct, resetMs) {
   };
 }
 
-function usage(fivePct, sevenPct, extra = {}) {
+// weekH: hours until the weekly reset. Accounts started their weeks on
+// different days, so each one resets on its own day; the pace follows from it.
+function usage(fivePct, sevenPct, extra = {}, weekH = 76) {
+  const expectedPct = Math.round(((168 - weekH) / 168) * 1000) / 10;
   return {
     fiveHour: usageWindow(fivePct, inH(2.2)),
-    sevenDay: { ...usageWindow(sevenPct, inH(76)), expectedPct: 55.0, aheadOfPace: sevenPct > 55 },
+    sevenDay: { ...usageWindow(sevenPct, inH(weekH)), expectedPct, aheadOfPace: sevenPct > expectedPct },
     ...extra,
   };
 }
@@ -99,7 +102,7 @@ const personal = (email) => ({ organizationName: `${email}'s Organization`, orga
 // does for accounts it polls on the slower candidate cadence.
 const ACCOUNTS = [
   { number: 1, email: 'alice@example.com', alias: 'work', organizationName: 'Acme Corp', organizationUuid: 'org-acme', usage: usage(20, 34) },
-  { number: 2, email: 'bob@example.com', ...personal('bob@example.com'), usage: usage(80, 61) },
+  { number: 2, email: 'bob@example.com', ...personal('bob@example.com'), usage: usage(80, 61, {}, 100) },
   {
     number: 3,
     email: 'carol@example.com',
@@ -111,8 +114,8 @@ const ACCOUNTS = [
     }),
     usageAgeSeconds: 540,
   },
-  { number: 4, email: 'dave@example.com', ...personal('dave@example.com'), usageStatus: 'token_expired', lastGoodUsage: usage(42, 50), lastGoodAgeSeconds: 5400 },
-  { number: 5, email: 'erin@example.com', ...personal('erin@example.com'), disabled: true, usage: usage(5, 12) },
+  { number: 4, email: 'dave@example.com', ...personal('dave@example.com'), usageStatus: 'token_expired', lastGoodUsage: usage(42, 50, {}, 40), lastGoodAgeSeconds: 5400 },
+  { number: 5, email: 'erin@example.com', ...personal('erin@example.com'), disabled: true, usage: usage(5, 12, {}, 120) },
 ];
 
 // State: { active, disabled: [numbers], drift? }. Without a `disabled` key the

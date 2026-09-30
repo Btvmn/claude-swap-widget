@@ -23,7 +23,7 @@
 }
 
 .stats-section:not([hidden]) {
-  animation: reveal 0.35s var(--ease);
+  animation: reveal 0.22s var(--ease);
 }
 
 /* ── head: title + period ────────────────────────────────────────── */

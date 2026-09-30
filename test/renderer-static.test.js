@@ -196,6 +196,29 @@ test('8. no image or font files, no Maestro assets', () => {
   assert.deepEqual(scan([...html, ...css, ...js], RULES.assets), []);
 });
 
+// The desktop widget is on screen all day: an endless animation, or a
+// transition that the 1 s clock restarts every second, repaints it without
+// end (measured: a fifth to a third of a CPU core, 2026-09-30).
+const LOOP_OK = /\banimation(-iteration-count)?\s*:\s*(spin\b|bar-sweep\b.*\bpaused\b|infinite\s*!important)/;
+
+test('9. nothing animates forever by itself: spinners loop, the bar sweep only while cswap works', () => {
+  const loops = [];
+  for (const f of css) {
+    read(f)
+      .split('\n')
+      .forEach((line, i) => {
+        if (/\binfinite\b/.test(line) && !LOOP_OK.test(line)) loops.push(`${rel(f)}:${i + 1}: ${line.trim()}`);
+      });
+  }
+  assert.deepEqual(loops, []);
+  const timeArc = read(path.join(RENDERER, 'css', 'hero.css')).match(/\n\.ring-time \{[^}]*\}/);
+  assert.ok(timeArc, 'hero.css styles .ring-time');
+  assert.doesNotMatch(timeArc[0], /transition/, '.ring-time must not transition: the 1 s clock would keep it moving');
+  for (const line of ['  animation: glow-warn 2.8s ease-in-out infinite;', '  animation: pulse 2s infinite paused;']) {
+    assert.ok(!LOOP_OK.test(line), `the check lets through: ${line}`);
+  }
+});
+
 // The rules themselves: each catches what it is for and lets through what
 // today's code legitimately does.
 test('the rules catch violations and pass legitimate code', () => {

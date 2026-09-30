@@ -6,8 +6,9 @@
 'use strict';
 
 // Every account but the active one, as a row with their compact bars
-// (window.AccountList): name, status pills, Switch and ⋯, then two thin bars
-// (5h, 7d) with their percentages and the time to the 5-hour reset.
+// (window.AccountList): name, status pills, Switch and ⋯, then one line per
+// window (5h, 7d): a thin bar, its percentage and the time to its reset, so
+// every account shows in how many days its week starts over.
 //
 //   AccountList.render(listEl, rows, ctx)
 //   AccountList.tick(now)      reset countdowns, every 30 s
@@ -72,6 +73,7 @@
 
   // A window that rolled over since cswap measured it is outdated, like
   // last-good data: no warning colour, dimmed (the hero and tray do the same).
+  // One grid line: label, bar, percentage, time to this window's reset.
   function bar(win, kind, stale, key, now) {
     const pct = win && typeof win.pct === 'number' ? Math.min(Math.max(win.pct, 0), 100) : null;
     const old = stale || Boolean(win && Usage.resetPassed(win, now));
@@ -79,10 +81,13 @@
     const fill = h('div', { class: cls, 'data-fill': `${key}|${kind}`, 'data-pct': pct === null ? '' : String(pct), 'data-resets-at': (win && win.resetsAt) || '' });
     const lvl = Usage.level(pct);
     const pctText = pct === null ? '—' : I18nDom.pct(pct);
+    // At the limit the reset is what matters most: when this account is usable again.
+    const resetCls = `acct-reset${!old && lvl === 'crit' ? ' matters' : ''}`;
     return [
       h('span', { class: 'lbl' }, t(`win.${kind}`)),
       h('div', { class: 'compact-bar-bg' }, fill),
       h('span', { class: `pct${old ? ' old' : lvl === 'crit' ? ' crit' : lvl === 'warn' ? ' warn' : ''}` }, pctText),
+      h('span', { class: resetCls, 'data-resets-at': (win && win.resetsAt) || '', title: resetTip(win, kind) }, resetText(win, now)),
     ];
   }
 
@@ -93,12 +98,17 @@
     return secs == null ? '' : `↻ ${I18nDom.duration(secs)}`;
   }
 
+  // "7-day usage: resets Sat, Oct 4, 6:59 PM"
+  function resetTip(win, kind) {
+    if (!win || !win.resetsAt) return null;
+    const when = window.I18n.formatDay(I18nDom.locale(), win.resetsAt, 'date-day-time', I18nDom.hour12());
+    return when ? `${t(`ring.name.${kind}`)}: ${t('reset.on', { date: when })}` : null;
+  }
+
   function row(r, ctx, now) {
     const { usage, stale } = Usage.effectiveUsage(r);
     const key = ctx.key(r);
     const name = Usage.label(r, t);
-    const five = usage && usage.fiveHour;
-    const reset = h('span', { class: 'acct-reset', 'data-resets-at': (five && five.resetsAt) || '' }, resetText(five, now));
     const pillEls = pills(r);
     const classes = ['acct', r.disabled ? 'is-disabled' : '', stale ? 'is-stale' : ''].filter(Boolean).join(' ');
     return h(
@@ -131,14 +141,14 @@
       ),
       pillEls.length ? h('div', { class: 'pills acct-pills' }, pillEls) : null,
       usage
-        ? h('div', { class: 'acct-bars' }, bar(five, '5h', stale, key, now), bar(usage.sevenDay, '7d', stale, key, now), reset)
+        ? h('div', { class: 'acct-bars' }, bar(usage.fiveHour, '5h', stale, key, now), bar(usage.sevenDay, '7d', stale, key, now))
         : h('p', { class: 'acct-no-usage' }, t('card.noUsage')),
     );
   }
 
   function render(el, rows, ctx) {
     listEl = el;
-    const sig = JSON.stringify([rows.map(rowSig), I18nDom.lang()]);
+    const sig = JSON.stringify([rows.map(rowSig), I18nDom.lang(), I18nDom.locale(), I18nDom.hour12()]);
     if (sig === listSig && el.childElementCount === rows.length) {
       patch(el, rows);
       return;
@@ -191,7 +201,8 @@
     if (!listEl) return;
     for (const el of listEl.querySelectorAll('.acct-reset')) {
       const at = el.dataset.resetsAt;
-      el.textContent = at ? resetText({ resetsAt: at }, now) : '';
+      const text = at ? resetText({ resetsAt: at }, now) : '';
+      if (el.textContent !== text) el.textContent = text;
     }
     // A window that has just rolled over: dim its bar until the next refresh.
     for (const f of listEl.querySelectorAll('.compact-bar-fill[data-resets-at]:not(.is-old)')) {
@@ -200,6 +211,7 @@
         f.classList.add('is-old');
         const pct = f.parentNode.nextElementSibling;
         if (pct) pct.className = 'pct old';
+        if (pct && pct.nextElementSibling) pct.nextElementSibling.classList.remove('matters');
       }
     }
   }

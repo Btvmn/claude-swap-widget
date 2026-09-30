@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/cover.jpg" alt="Claude Swap Widget for claude-swap: every Claude Code account in one place. The menu bar shows the active account as a ring with 20 · 34; below it the popover in light and dark mode, with the active account in two large rings and the other accounts as rows with usage bars and a Switch button.">
+  <img src="docs/cover.jpg" alt="Claude Swap Widget for claude-swap: every Claude Code account in one place. The menu bar shows the active account as a ring with 20 · 34; below it the popover in light and dark mode, with the active account in two large rings and the other accounts as rows with a 5-hour and a 7-day bar, each with the time to its reset, and a Switch button.">
 </p>
 
 <p align="center">
@@ -32,7 +32,7 @@ reads or writes your credentials itself.
 ### Every account at a glance
 
 <p align="center">
-  <img src="docs/accounts.jpg" alt="The popover in dark and light mode. At the top, the active account in two large rings: the 5-hour session with a live countdown, and the week with its reset date. Below, each other account as a row with 5h and 7d bars, badges such as 7d ahead of pace, Token expired, Stale and Disabled, and a Switch button. At the bottom, Switch to best account and Next.">
+  <img src="docs/accounts.jpg" alt="The popover in dark and light mode. At the top, the active account in two large rings: the 5-hour session with a live countdown, and the week with its reset date. Below, each other account as a row with a 5h and a 7d line (bar, percentage and time to that window's reset, such as 4d 4h for the week), badges such as 7d ahead of pace, Token expired, Stale and Disabled, and a Switch button. At the bottom, Switch to best account and Next.">
 </p>
 
 - The **active account** in two large rings: the 5-hour session and the
@@ -40,9 +40,12 @@ reads or writes your credentials itself.
   The week ring marks where an even pace would be and tells you when you are
   ahead of it. Per-model weekly limits and extra-usage spend unfold under the
   rings.
-- **Every other account** as a row with two thin bars (5h, 7d), the time to
-  its reset and badges: **Disabled**, **Token expired**, **Re-login**,
-  **Stale**, **9m ago** for an older measurement, **7d ahead of pace**.
+- **Every other account** as a row with one line per window, 5h and 7d: a
+  thin bar, the percentage and the time to that window's reset. So every
+  account shows in how many days its week starts over (hover for the exact
+  date); a window at its limit shows its reset in bold. Badges:
+  **Disabled**, **Token expired**, **Re-login**, **Stale**, **9m ago** for an
+  older measurement, **7d ahead of pace**.
 - **Switch** on each row, a **⋯** menu (switch, in rotation on/off,
   statistics, copy email, remove), and **Switch to best account**
   (`cswap switch --strategy best`) and **Next** at the bottom.
@@ -83,7 +86,7 @@ reset and new data has not arrived yet.
 ### Your language
 
 <p align="center">
-  <img src="docs/languages.jpg" alt="The popover in Russian, German and Ukrainian.">
+  <img src="docs/languages.jpg" alt="The popover in Russian, German and Ukrainian, with the rings, the countdowns and each account's reset times in that language.">
 </p>
 
 English, Русский, Українська and Deutsch. The app follows the system

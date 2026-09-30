@@ -8,8 +8,8 @@
 
 /*
  * The other accounts: one row each, in their compact-bar look. Row: name and
- * actions, the pills (when there are any), then 5h and 7d bars with their
- * percentages and the time to the 5-hour reset.
+ * actions, the pills (when there are any), then one line per window (5h, 7d)
+ * with its bar, percentage and time to its reset.
  */
 
 #acctList {
@@ -70,10 +70,11 @@
 
 .acct-bars {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 32px auto minmax(0, 1fr) 32px auto;
+  grid-template-columns: auto minmax(0, 1fr) 34px auto;
   align-items: center;
-  column-gap: 6px;
-  margin-top: 6px;
+  column-gap: 8px;
+  row-gap: 3px;
+  margin-top: 5px;
 }
 
 .acct-bars .lbl {
@@ -105,6 +106,12 @@
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
+}
+
+/* The window is at its limit: its reset is when the account is usable again. */
+.acct-reset.matters {
+  color: var(--ink-2);
+  font-weight: 600;
 }
 
 .compact-bar-bg {

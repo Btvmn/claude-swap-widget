@@ -106,7 +106,7 @@ button[aria-disabled='true'] {
   color: var(--ink-2);
   font-size: 15px;
   line-height: 1;
-  transition: background 0.2s ease, color 0.2s ease, transform 0.15s ease;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.16s var(--ease);
 }
 
 .icon-btn:hover:not(:disabled):not([aria-disabled='true']) {
@@ -116,7 +116,7 @@ button[aria-disabled='true'] {
 
 .icon-btn:active:not(:disabled):not([aria-disabled='true']) {
   background: var(--btn-active);
-  transform: scale(0.92);
+  transform: scale(0.95);
 }
 
 /* A toggle that is on, e.g. #stats-btn while the statistics show. */
@@ -171,7 +171,7 @@ button[aria-disabled='true'] {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: filter 0.15s ease, transform 0.1s ease;
+  transition: filter 0.15s ease, transform 0.16s var(--ease);
 }
 
 .primary:hover:not(:disabled):not([aria-disabled='true']) {
@@ -194,7 +194,7 @@ button[aria-disabled='true'] {
   font-size: 11.5px;
   font-weight: 600;
   white-space: nowrap;
-  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.16s var(--ease);
 }
 
 .pill-btn:hover:not(:disabled):not([aria-disabled='true']) {
@@ -217,11 +217,15 @@ button[aria-disabled='true'] {
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, transform 0.16s var(--ease);
 }
 
 .secondary:hover:not(:disabled):not([aria-disabled='true']) {
   background: var(--field-hover);
+}
+
+.secondary:active:not(:disabled):not([aria-disabled='true']) {
+  transform: scale(0.97);
 }
 
 .link {
@@ -315,7 +319,7 @@ button[aria-disabled='true'] {
   font-size: 11px;
   font-weight: 500;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
-  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.16s var(--ease);
 }
 
 .cmd button:hover:not(:disabled):not([aria-disabled='true']) {
@@ -341,7 +345,7 @@ button[aria-disabled='true'] {
   font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
-  animation: reveal 0.35s var(--ease);
+  animation: reveal 0.22s var(--ease);
 }
 
 .banner::before {
@@ -444,6 +448,13 @@ body.view-stats .toast {
   }
 }
 
+/* Appearing without moving (reduced motion). */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
 /* The toast. */
 @keyframes sheet-in {
   from {
@@ -519,8 +530,17 @@ body.view-stats .toast {
   .icon-btn:active,
   .primary:active,
   .pill-btn:active,
+  .secondary:active,
   .cmd button:active {
     transform: none !important;
+  }
+
+  /* Gentler, not none: what appears still fades in, it just does not move. */
+  .banner,
+  .toast,
+  .expand-section,
+  .stats-section:not([hidden]) {
+    animation: fade-in 0.2s ease !important;
   }
 }
 

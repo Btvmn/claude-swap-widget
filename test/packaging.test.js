@@ -39,3 +39,20 @@ test('the app ships the Electron and Chromium licences next to app.asar', () => 
     assert.ok(fs.existsSync(path.join(ROOT, from)), `${from} is missing (npm install?)`);
   }
 });
+
+// The packaged app is never a Node runtime: with runAsNode on, an inherited
+// ELECTRON_RUN_AS_NODE=1 (VS Code's terminal sets it; `open -a` passes it on)
+// made the app start as plain Node and quit at once, and any process could use
+// it to run scripts under the app's name. It never forks with that variable.
+test('the packaged app ignores ELECTRON_RUN_AS_NODE, NODE_OPTIONS and --inspect', () => {
+  assert.deepEqual(pkg.build.electronFuses, {
+    runAsNode: false,
+    enableNodeOptionsEnvironmentVariable: false,
+    enableNodeCliInspectArguments: false,
+    onlyLoadAppFromAsar: true,
+  });
+  for (const file of MAIN_FILES) {
+    const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.doesNotMatch(src, /\bfork\(|ELECTRON_RUN_AS_NODE/, `${file} would need runAsNode`);
+  }
+});
