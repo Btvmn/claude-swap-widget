@@ -140,6 +140,11 @@ It is **not** a fork of it.
   Dev switches (ignored when packaged where noted): `CSW_THEME`, `CSW_LANG`, `CSW_CAPTURE=out.png`
   (screenshot + `out-tray.png`, then quit), `CSW_USER_DATA=<dir>` (packaged: ignored),
   `CSW_VIEW`, `CSW_WINDOW`. Always give captures and e2e a temp `CSW_USER_DATA`.
+- README pictures (`docs/*.jpg`) are collages of `CSW_CAPTURE` shots on the fake cswap
+  (example.com accounts only). macOS ignores `--force-device-scale-factor`: for 2x shots on a
+  1x display, run the app in a double-size window with zoom factor 2. `scripts/fake-history.js`
+  only fills the local day up to now, so shoot "Today" stats with a late `TZ` (e.g.
+  `TZ=Pacific/Kiritimati`) for both fake-history and the app.
 - `CSWAP_PATH=/nonexistent` does NOT simulate a missing cswap (discovery falls back to
   `~/.local/bin/cswap`, the real one): use the e2e `missing` flow.
 - On the user's real accounts only run `list`/`status`; test switching on the fake.
@@ -176,6 +181,8 @@ It is **not** a fork of it.
         rows, expand-row ticks, comet on 0 %, permission handler, reset-time tray refresh, …).
   - [x] Flat look: no outlines on pills, capsule buttons, command rows, toast, banner, stats
         cards (they come back under "Increase contrast"). README + screenshots updated.
+  - [x] README redone: cover, feature collages (accounts, rings, stats, menu bar, languages),
+        badges, mermaid diagram, collapsible troubleshooting.
 - [ ] Try it by hand on the Mac: glass/vibrancy, tray pictures on the real menu bar, widget drag,
       notifications permission, Open at Login, all 4 languages.
 - [ ] Push to github.com/Btvmn/claude-swap-widget and publish the dmg as a release.
