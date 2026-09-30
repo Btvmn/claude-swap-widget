@@ -28,3 +28,14 @@ test('the packaged files are what the app needs, and nothing from test/ or scrip
   assert.ok(fs.existsSync(path.join(ROOT, 'src', 'renderer', 'vendor', 'chart.umd.min.js')), 'Chart.js is vendored under src/ so it ships');
   assert.equal(pkg.build.mac.extendInfo.LSUIElement, true, 'menu-bar only: no Dock icon');
 });
+
+test('the app ships the Electron and Chromium licences next to app.asar', () => {
+  const extra = pkg.build.extraResources || [];
+  for (const [from, to] of [
+    ['node_modules/electron/dist/LICENSE', 'LICENSE.electron.txt'],
+    ['node_modules/electron/dist/LICENSES.chromium.html', 'LICENSES.chromium.html'],
+  ]) {
+    assert.ok(extra.some((e) => e.from === from && e.to === to), `build.extraResources must copy ${from} to ${to}`);
+    assert.ok(fs.existsSync(path.join(ROOT, from)), `${from} is missing (npm install?)`);
+  }
+});

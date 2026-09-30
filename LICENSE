@@ -23,7 +23,7 @@ SOFTWARE.
 -------------------------------------------------------------------------------
 Third-party code
 
-Parts of the user interface are adapted, with the author's permission, from
+Parts of the user interface are adapted from
 "Claude Usage Widget - The Maestro edition"
 (https://github.com/TheMaestr-o/claude-usage-widget, branch maestro-edition,
 commit b79d4b1), which is based on "Claude Usage Widget" by Slavomir Durej
@@ -60,3 +60,9 @@ SOFTWARE.
 Chart.js (MIT, Copyright (c) 2014-2024 Chart.js Contributors) and the
 @kurkle/color library bundled in it (MIT, Jukka Kurkela) are included in
 src/renderer/vendor/; see src/renderer/vendor/LICENSE.chartjs.md.
+
+The packaged app is built on Electron (MIT, Copyright (c) Electron
+contributors, Copyright (c) 2013-2020 GitHub Inc.), which includes Chromium
+and other open source components. Their licences ship inside the app, in
+Claude Swap Widget.app/Contents/Resources/LICENSE.electron.txt and
+LICENSES.chromium.html.
