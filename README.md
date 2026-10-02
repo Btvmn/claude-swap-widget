@@ -292,6 +292,8 @@ npm run dist             # → dist/Claude Swap Widget-<version>-arm64.dmg
 
 ## Credits
 
+- [The Maestro](https://github.com/TheMaestr-o), who designed the look this widget
+  is built on (see below), is a collaborator on this project.
 - [claude-swap](https://github.com/realiti4/claude-swap) by Onur Cetinkol
   (MIT) does all the account work. This widget is only a front end for it.
 - The look — glass rings, menu bar pictures, statistics and the refresh
