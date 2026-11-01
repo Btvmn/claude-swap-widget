@@ -11,8 +11,12 @@
 //   4 dave          re-login, last-good week 33 and Fable 12
 //   5 erin          5h 41, no week, Fable 0, login in hours (red pill)
 
+const fs = require('fs');
+const path = require('path');
+const { historyKey } = require('../../src/history');
 const I18n = require('../../src/shared/i18n');
 
+const en = I18n.translator('en');
 const ru = I18n.translator('ru');
 const SESSION = 'Session · 5 h';
 const WEEK = 'Week · all models';
@@ -93,7 +97,7 @@ module.exports = {
     t.section('alice, no 5-hour window: Fable and the week');
     await hero(t, [['left', FABLE, '82%'], ['right', WEEK, '71%']], 'Fable on the left, the week on the right');
     t.equal(await t.ui.oneRing(), false, 'two rings');
-    t.equal(await t.ui.heroNote(), { text: NO_SESSION, tip: 'Anthropic reports no 5-hour window for this account (verified Ultra plans have none)' }, 'the note says so, the tip says why');
+    t.equal(await t.ui.heroNote(), { text: NO_SESSION, tip: 'Anthropic reports no 5-hour window for this account (verified Ultra accounts have none)' }, 'the note says so, the tip says why');
     let g = await t.ui.gauges();
     t.equal(g.map((x) => x.stale), [false, false], 'fresh data: neither is dimmed');
     t.equal(g.map((x) => x.tip), [FABLE, ''], 'the model’s label has a tooltip');
@@ -193,7 +197,7 @@ module.exports = {
     t.match(badges[1], /^Stale · /, 'and how old the numbers are');
     d = await draws.last();
     t.equal(d && pick(d, ['solo', 'seven', 'doubtful']), { solo: true, seven: { pct: 33, hot: null }, doubtful: true }, 'the picture is solo, doubtful');
-    t.match(t.trayTooltip(), /^dave@example\.com · 7d 33% · Fable 12% · stale\nWeek: 33%/, 'the tooltip says stale and no more');
+    t.match(t.trayTooltip(), /^dave@example\.com · 7d 33% · Fable 12% · stale · re-login\nWeek: 33%/, 'the tooltip says stale, and that the login is gone');
     await t.snap('dave-active');
 
     t.section('erin, a seat with no week: the session and Fable');
@@ -271,6 +275,7 @@ module.exports = {
     const pillOf = (s) => (s.pills[s.pills.length - 1] || '').split(' · ').slice(1).join(' · ');
     const stripOf = (s) => (s.cells[s.cells.length - 1] || '').split(' · ').slice(1).join(' · ');
     const nearTip = (s) => s.items.find((i) => i.label === 'Near limit').tip;
+    const inUseTips = (s) => [...s.items, ...s.cards].filter((i) => i.label === 'In use').map((i) => i.tip);
     const ANY_TIP = 'Time with the limit at 90% or more';
     const SESSION_TIP = 'Time with the session limit at 90% or more';
 
@@ -278,14 +283,16 @@ module.exports = {
     let s = await t.ui.stats();
     t.equal(s.items.slice(0, 2).map((i) => i.value), ['82%', '82%'], 'her peak and average read her fullest limit, Fable');
     t.equal(nearTip(s), ANY_TIP, 'her Near limit does not speak of a session');
+    t.equal(inUseTips(s), [en('stats.inUseTipLow')], 'and her In use says it reads low');
     await statsOf('work', 'bars', pillOf, 'Fable 82%', 'her bars name the limit the value is from');
     await statsOf('work', 'summary', stripOf, 'Fable 82%', 'and so does the strip');
+    t.equal(inUseTips(await t.ui.stats()), [en('stats.inUseTipLow')], 'the In use card says it reads low too');
 
     await statsOf('carol', 'line', lines, [['Week', 12, true]], 'carol has the week alone, and it carries the end dot');
     s = await t.ui.stats();
     t.equal(nearTip(s), ANY_TIP, 'her Near limit does not speak of a session either');
 
-    await statsOf('erin', 'line', lines, [['Session', 41, true], ['Week', null, false]], 'erin’s first line is her real session');
+    await statsOf('erin', 'line', lines, [['Session', 41, true], ['Fable', 0, false]], 'erin’s first line is her real session, and her only weekly limit is the second');
     s = await t.ui.stats();
     t.equal(nearTip(s), SESSION_TIP, 'and her Near limit does speak of it');
     await statsOf('erin', 'bars', pillOf, '41%', 'a session peak is a plain number');
@@ -294,8 +301,65 @@ module.exports = {
     s = await t.ui.stats();
     t.equal(s.items[0].value, '3%', 'his peak reads the session');
     t.equal(nearTip(s), SESSION_TIP, 'and so does his Near limit');
+    t.equal(inUseTips(s), [en('stats.inUseTip')], 'his In use needs no warning');
     await statsOf('bob', 'bars', pillOf, '3%', 'his bars are plain numbers');
     await statsOf('bob', 'summary', stripOf, '3%', 'and his strip');
     await t.snap('bob-statistics');
+
+    t.section('statistics: an account that lost its 5-hour window, in a week with a reset');
+    // Lines as the store writes them, in the UTC day files it reads them from; today's are the fake's.
+    const seed = (email, org, list) => {
+      for (const [daysAgo, hour, minute, fields] of list) {
+        const d = new Date();
+        d.setDate(d.getDate() - daysAgo);
+        d.setHours(hour, minute, 0, 0);
+        const line = { t: Math.floor(d.getTime() / 1000), k: historyKey(email, org), ...fields };
+        fs.appendFileSync(path.join(t.userData, 'history', `${d.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}\n`);
+      }
+    };
+    seed('alice@example.com', 'org-acme', [
+      [6, 10, 0, { h: 30, w: 10, m: { Fable: 14 } }],
+      [5, 10, 0, { h: 100, w: 20, m: { Fable: 30 } }], // the peak of the week, a session at its limit
+      [4, 10, 0, { h: 10, w: 30, m: { Fable: 40 } }],
+      [3, 9, 0, { h: 20, w: 95, m: { Fable: 97 } }],
+      [3, 17, 0, { h: 5, w: 1, m: { Fable: 2 } }], // the week resets
+      [2, 8, 0, { h: 0, w: 5, m: { Fable: 6 } }], // an idle 5h, its last reading
+      [2, 10, 0, { w: 6, m: { Fable: 8 } }],
+      [1, 10, 0, { w: 40, m: { Fable: 50 } }], // the one stretch of use
+      [1, 10, 10, { w: 41, m: { Fable: 51 } }],
+      [1, 10, 20, { w: 42, m: { Fable: 52 } }],
+    ]);
+    seed('carol@example.com', 'org-globex', [
+      [3, 10, 0, { h: 50, w: 10 }],
+      [2, 10, 0, { h: 60, w: 11 }],
+    ]);
+    await t.ui.statsPeriod('week');
+    const days = (s) => s.lines.map((l) => [l.label, l.ys, l.endDot]);
+    await statsOf('work', 'line', days, [
+      ['Fable', [14, 30, 40, 97, 8, 52, 82], true],
+      ['Week', [10, 20, 30, 95, 6, 42, 71], false],
+      ['Session', [30, 100, 10, 20, 0, null, null], false],
+    ], 'the limit filling up is drawn and ends in the dot; each day keeps its highest; the old session stays, up to its last day');
+    s = await t.ui.stats();
+    t.equal(s.items[0].value, '100%', 'the peak of the week, which is on a line');
+    await t.snap('work-week-lost-5h');
+    const lastBusy = new Date();
+    lastBusy.setDate(lastBusy.getDate() - 1);
+    const busiest = (x) => x.items.find((i) => i.label === 'Busiest day').value;
+    await statsOf('work', 'bars', busiest, lastBusy.toLocaleDateString('en-US', { weekday: 'long' }), 'the busiest day is the one with use, not the highest bar');
+    await statsOf('carol', 'line', lines, [['Session', 60, false], ['Week', 12, true]], 'with no model the session stops without a dot, and the week carries it');
+    await t.ui.openStats();
+
+    t.section('a model near its limit on a normal account says so, on its row and on the hero');
+    t.scenario('default');
+    t.setFakeState({ active: 1 });
+    await t.refresh();
+    const badgesOf = async (number) => ((await t.ui.cards()).find((c) => c.number === number) || { badges: [] }).badges;
+    await t.expect(async () => (await badgesOf(3)).includes('Fable 76%'), true, 'carol’s row has its pill');
+    await t.expect(async () => (await badgesOf(1)).some((b) => b.startsWith('Fable')), false, 'alice has no model near a limit');
+    t.setFakeState({ active: 3 });
+    await t.refresh();
+    await t.expect(async () => (await t.ui.activeNumbers()).join(), '3', 'carol is active');
+    await t.expect(async () => (await badgesOf(3)).includes('Fable 76%'), true, 'and the pill stays with her on the hero');
   },
 };

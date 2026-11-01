@@ -50,20 +50,15 @@
       Usage.mainWindows(usage).shown.map((s) => [s.kind, s.name || null, windowSig(s.win)]),
       (Array.isArray(u.scoped) ? u.scoped : []).map((w) => [w && w.name, w && Math.round(w.pct)]),
       Usage.badges(r, t).map((b) => `${b.key}:${b.tone}`),
+      Usage.modelBadges(usage, t).map((b) => `${b.key}:${b.tone}`),
     ];
   }
 
-  // Pills: the badges minus Active (the hero is the active one), plus one per
-  // model window without a line of its own that has reached the warn line.
+  // Pills: the badges minus Active (the hero is the active one), plus the model
+  // windows near their limit that have no line of their own.
   function pills(row) {
     const { usage } = Usage.effectiveUsage(row);
-    const out = Usage.badges(row, t).filter((b) => b.key !== 'active');
-    const { rest } = Usage.mainWindows(usage);
-    for (const w of usage && Array.isArray(usage.scoped) ? usage.scoped : []) {
-      if (rest.includes(w) && Usage.level(w.pct) !== 'ok') {
-        out.push({ key: `model:${w.name}`, label: t('win.pct', { window: w.name || '?', pct: Math.round(w.pct) }), tone: Usage.level(w.pct) === 'crit' ? 'crit' : 'warn', title: t('model.week', { name: w.name || '?' }) });
-      }
-    }
+    const out = [...Usage.badges(row, t).filter((b) => b.key !== 'active'), ...Usage.modelBadges(usage, t)];
     return out.map((b) => h('span', { class: `pill ${b.tone}`, title: b.title || null, 'data-badge': b.key }, b.label));
   }
 

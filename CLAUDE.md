@@ -51,7 +51,8 @@ It is **not** a fork of it.
   lastGoodFetchedAt?, lastGoodAgeSeconds?, usageError?, usageRetryAt?, loginExpiresAt?`
   (the last three only from 0.27). `loginExpiresAt` (ISO 8601 UTC, absent when unknown) is when the
   stored login's refresh token expires: only a fresh `/login` plus `cswap add --slot N` replaces it,
-  and after it the slot is `relogin_required`. The widget warns 3 days ahead (red under 24 h).
+  and after it the slot is `relogin_required`. The widget warns 3 days ahead (red under 24 h), but not
+  under `foreign_credential`: the active row's date comes from the live credential, then another account's.
 - `usageStatus`: `ok`, `unavailable`, `token_expired` (refresh deferred, retried by itself),
   `relogin_required` (only the user can fix it), `keychain_unavailable`, `foreign_credential`
   (a switch repairs it), `no_credentials`, `api_key` (no subscription quota). Unknown values
@@ -104,6 +105,12 @@ It is **not** a fork of it.
 - `window.api` from contextBridge is a non-configurable global: a top-level `const api`
   in a classic script is a SyntaxError. The renderer aliases it as `ipc`.
 - A sandboxed preload has no `clipboard`; copying goes through main (`app:copy`).
+- Every dev Electron is an icon in the owner's Dock, on a Mac in daily use: one at a time, under a
+  `timeout`, and no more captures than needed. Never copy or wrap a script that spawns Electron, and
+  never require the `electron` package by its path: under Electron that gives the binary's path too, and
+  a copy of `scripts/tray-sheet.js` relaunched itself until 874 processes filled the Dock (2026-11-01;
+  the script now refuses). The widget e2e flow starting a second instance is the one legitimate
+  Electron-from-Electron. `CSW_CAPTURE` runs post no notifications and record no history.
 - VS Code (and Claude Code inside it) leaks `ELECTRON_RUN_AS_NODE=1` into child
   processes, which makes Electron run as plain Node (`app` is undefined).
   `npm start` goes through `scripts/start.js`, which clears it.
@@ -143,7 +150,7 @@ It is **not** a fork of it.
   `src/history.js`: usage history as JSONL per UTC day in `userData/history/` (32 days).
 - Shared UMD modules (main `require`s them, the renderer loads them with `<script>`):
   `src/shared/usage.js` (`window.Usage`), `i18n.js` (`window.I18n`, en/ru/uk/de),
-  `stats.js` (`window.Stats`). `Usage.mainWindows(usage)` is the one place that decides which windows
+  `stats.js` (`window.Stats`; `Stats.lineChart` decides what the line chart draws). `Usage.mainWindows(usage)` is the one place that decides which windows
   get a ring and a row line (at most two: 5h + 7d, model + 7d, 5h + model, or one alone; the rest stay
   under "more limits"); `Usage.loginNotice` is the one rule for the login warning (pill, menu line,
   tooltip, notification). `src/tray-model.js` (pure) decides the menu-bar picture (`solo`: no 5h, only
@@ -219,6 +226,9 @@ It is **not** a fork of it.
         now reset their weeks on different days. README pictures (cover, accounts, languages)
         reshot with the new rows.
   - [x] 2026-09-30: packaged build with fuses installed in /Applications and launched.
+- [x] 2026-11-01, v0.2.0 (published on GitHub with the dmg): accounts without a 5-hour window (Ultra),
+      Fable as a first-class limit (ring, row line, pill, notifications), one-window menu-bar pictures,
+      Team seats (no `sevenDay`), login-expiry warnings, statistics without a 5h. Independent review
+      with adversarial verification, all confirmed findings fixed. Installed in /Applications.
 - [ ] Try it by hand on the Mac: glass/vibrancy, tray pictures on the real menu bar, widget drag,
-      notifications permission, Open at Login, all 4 languages.
-- [ ] Push to github.com/Btvmn/claude-swap-widget and publish the dmg as a release.
+      notifications permission (also the new model and login ones), Open at Login, all 4 languages.

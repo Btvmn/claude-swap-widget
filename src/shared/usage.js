@@ -23,7 +23,8 @@
   const LOGIN_WARN_S = 3 * 86400; // warn this long before a login lapses
   const LOGIN_URGENT_S = 86400; // from here on the warning is red
   // These statuses already say the login is gone, or there is none to lapse.
-  const NO_LOGIN_NOTICE = Object.freeze(['relogin_required', 'no_credentials', 'api_key']);
+  // Under foreign_credential cswap's date is the other account's, not this slot's.
+  const NO_LOGIN_NOTICE = Object.freeze(['relogin_required', 'no_credentials', 'api_key', 'foreign_credential']);
 
   // Every usageStatus cswap 0.26–0.27 emits besides "ok", as i18n keys. The
   // menu line uses `menuLine.<status>` (lowercase where the language wants
@@ -81,6 +82,7 @@
     'win.5h': '5h',
     'win.7d': '7d',
     'win.pct': '{window} {pct}%',
+    'model.week': '{name} · week',
     'fmt.pct': '{p}%',
     'setup.error.unknown': 'Unknown error',
     'trayTip.loading': 'Claude accounts — loading…',
@@ -241,7 +243,7 @@
     return { at, seconds: Math.max(0, left), expired: left <= 0, urgent: left < LOGIN_URGENT_S };
   }
 
-  // loginExpiry, when the row's status does not already say it.
+  // loginExpiry, when the row's status does not already say it (NO_LOGIN_NOTICE).
   function loginNotice(row, now = Date.now()) {
     return NO_LOGIN_NOTICE.includes(row && row.usageStatus) ? null : loginExpiry(row, now);
   }
@@ -315,6 +317,21 @@
     }
     const pace = paceNote(eff.usage && eff.usage.sevenDay, tt);
     if (pace) out.push({ key: 'pace', label: tt('badge.pace'), tone: 'warn', title: pace });
+    return out;
+  }
+
+  // One pill per model window with no ring or line of its own (mainWindows'
+  // `rest`) that has reached the warn line, in cswap's order. A window that has
+  // rolled over says nothing any more. The rows and the hero show the same.
+  function modelBadges(usage, t, now = Date.now()) {
+    const tt = tr(t);
+    const { rest } = mainWindows(usage);
+    const out = [];
+    for (const w of usage && Array.isArray(usage.scoped) ? usage.scoped : []) {
+      if (!rest.includes(w) || resetPassed(w, now) || level(w.pct) === 'ok') continue;
+      const name = w.name || '?';
+      out.push({ key: `model:${name}`, label: tt('win.pct', { window: name, pct: Math.round(w.pct) }), tone: level(w.pct) === 'crit' ? 'crit' : 'warn', title: tt('model.week', { name }) });
+    }
     return out;
   }
 
@@ -441,6 +458,8 @@
     if (aged !== null) parts.push(tt('trayTip.old', { age: formatDuration(aged, tt) }));
     const login = loginNotice(active, now);
     if (login) parts.push(login.expired ? tt('trayTip.loginExpired') : tt('trayTip.loginSoon', { time: formatDuration(login.seconds, tt) }));
+    // Nothing else on the tooltip says it, and only the user can fix this one.
+    if (active.usageStatus === 'relogin_required') parts.push(tt('menuLine.relogin_required'));
 
     const highest = (...ps) => ps.filter((p) => p !== null).reduce((m, p) => (m === null || p > m ? p : m), null);
     const pct = (p) => (p === null ? '–' : tt('fmt.pct', { p: Math.round(p) }));
@@ -519,6 +538,7 @@
     agedSeconds,
     paceNote,
     badges,
+    modelBadges,
     label,
     shortName,
     menuLabel,

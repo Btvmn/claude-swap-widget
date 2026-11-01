@@ -235,7 +235,7 @@ test('no 5-hour window: peak, average, near limit and busiest read the fullest w
   assert.equal(st.nearMs, 20 * MIN, '90 % for 10 min and 92 % for 10 min');
   assert.equal(st.buckets[9].nearMs, 10 * MIN);
   assert.equal(st.buckets[12].nearMs, 10 * MIN);
-  assert.equal(st.busiest.start, day(9, 0), 'the same peak: the bucket with more time in use');
+  assert.equal(st.busiest.start, day(9, 0), 'the bucket with time in use, not the later one at the same peak');
   assert.equal(st.inUseMs, 20 * MIN);
   assert.equal(st.observedMs, 30 * MIN);
   assert.equal(st.hasSession, false);
@@ -307,18 +307,23 @@ test('sessionPeak is the strict 5h peak; peakWindow names a bucket\'s peak when 
   assert.deepEqual(read(bucket({ w: 55 }, { h: 55 })), [55, 55, null], 'in either order');
 });
 
-test('modelLast: where each model stood at the end of the bucket, own names only', () => {
+test('weekPeak and modelPeak: the highest each stood in the bucket, own names only', () => {
   const day = (h, mi) => at(2026, 9, 29, h, mi);
   const st = S.computeStats([
-    sample(day(9, 0), { h: 1, m: { Fable: 15, Opus: 40 } }),
-    sample(day(9, 30), { h: 1, m: { Fable: 12 } }), // the last one, not the highest; Opus is not in it: its 40 stands
+    sample(day(9, 0), { h: 1, w: 92, m: { Fable: 15, Opus: 40 } }),
+    sample(day(9, 30), { h: 1, w: 3, m: { Fable: 12 } }), // after a reset; Opus is not in it: its 40 stands
+    sample(day(9, 40), { h: 1, m: { Fable: 18 } }),
     sample(day(10, 0), { h: 1 }),
     sample(day(11, 0), { h: 1, m: { Fable: 'x', Opus: null } }),
   ], 'day', NOW);
-  assert.deepEqual(st.buckets[9].modelLast, { Fable: 12, Opus: 40 });
-  assert.equal(st.buckets[8].modelLast, null, 'nothing measured');
-  assert.equal(st.buckets[10].modelLast, null, 'no models in the reading');
-  assert.equal(st.buckets[11].modelLast, null, 'no numbers in them');
+  assert.deepEqual(st.buckets[9].modelPeak, { Fable: 18, Opus: 40 });
+  assert.equal(st.buckets[9].weekPeak, 92);
+  assert.equal(st.buckets[9].weekLast, 3, 'the end of the bucket is another figure');
+  assert.equal(st.buckets[8].modelPeak, null, 'nothing measured');
+  assert.equal(st.buckets[8].weekPeak, null);
+  assert.equal(st.buckets[10].modelPeak, null, 'no models in the reading');
+  assert.equal(st.buckets[10].weekPeak, null);
+  assert.equal(st.buckets[11].modelPeak, null, 'no numbers in them');
 
   // JSON.parse makes `__proto__` an own property: it must not count, or end up as a prototype.
   const inherited = Object.create({ Ghost: 99 });
@@ -327,11 +332,12 @@ test('modelLast: where each model stood at the end of the bucket, own names only
     sample(day(9, 0), { m: JSON.parse('{"__proto__": 99, "constructor": 7, "Fable": 1}') }),
     sample(day(10, 0), { m: inherited }),
   ], 'day', NOW);
-  const last = edited.buckets[9].modelLast;
-  assert.deepEqual(Object.keys(last).sort(), ['Fable', 'constructor']);
-  assert.equal(Object.getPrototypeOf(last), Object.prototype);
+  const peaks = edited.buckets[9].modelPeak;
+  assert.deepEqual(Object.keys(peaks).sort(), ['Fable', 'constructor']);
+  assert.equal(peaks.constructor, 7, 'a name that is on every object starts from its own reading');
+  assert.equal(Object.getPrototypeOf(peaks), Object.prototype);
   assert.equal(edited.buckets[9].peak, 7);
-  assert.deepEqual(edited.buckets[10].modelLast, { Fable: 2 }, 'an inherited name is not a window');
+  assert.deepEqual(edited.buckets[10].modelPeak, { Fable: 2 }, 'an inherited name is not a window');
   assert.equal(edited.buckets[10].peak, 2);
   assert.equal(edited.topModel, 'constructor');
 });
@@ -386,10 +392,11 @@ test('a mixed week: older days with h, recent days without', () => {
   assert.deepEqual(b.map((x) => x.peak), [null, 60, 80, 40, 75, null, 77]);
   assert.deepEqual(b.map((x) => x.peakWindow), [null, null, null, null, 'Fable', null, 'Fable']);
   assert.deepEqual(b.map((x) => x.weekLast), [null, 30, 35, 90, 70, null, 72]);
-  assert.deepEqual(b.map((x) => x.modelLast && x.modelLast.Fable), [null, 20, 25, null, 75, null, 77]);
+  assert.deepEqual(b.map((x) => x.modelPeak && x.modelPeak.Fable), [null, 20, 25, null, 75, null, 77]);
   assert.equal(st.peak, 80);
-  assert.equal(st.busiest.start, at(2026, 9, 25));
+  assert.equal(st.busiest, null, 'readings a day apart: no time in use to go by');
   assert.equal(st.hasSession, true, 'the session line stays, up to the last day that has one');
+  assert.equal(st.endsInSession, false, 'but it no longer says where things stand');
   assert.equal(st.topModel, 'Fable');
 
   // The same history, Today: nothing but the fallback in it.
@@ -397,6 +404,148 @@ test('a mixed week: older days with h, recent days without', () => {
   assert.equal(today.hasSession, false);
   assert.equal(today.peak, 77);
   assert.equal(today.buckets[10].peakWindow, 'Fable');
+});
+
+// A week as the view gets it: what each line reads per day, oldest first.
+const ys = (line) => line && line.points.map((p) => p.y);
+
+test('lineChart with a 5h in every reading: the session and the week as ever, whatever else the readings carry', () => {
+  const day = (d, h, mi = 0) => at(2026, 9, d, h, mi);
+  const st = S.computeStats([
+    sample(day(24, 10), { h: 60, w: 30, m: { Fable: 99 } }),
+    sample(day(25, 9), { h: 20, w: 95, m: { Fable: 99 } }),
+    sample(day(25, 17), { h: 5, w: 1, m: { Fable: 2 } }), // a reset: the week ends the day at 1
+    sample(day(26, 10), { h: 40, w: 2, u: 3 }),
+  ], 'week', NOW);
+  const plot = S.lineChart(st);
+  assert.deepEqual(ys(plot.first), [null, 60, 20, 40, null, null, null], 'each day\'s session peak');
+  assert.deepEqual(ys(plot.second), [null, 30, 1, 2, null, null, null], 'the week\'s level at the day\'s end, not its highest');
+  assert.deepEqual([plot.first.name, plot.second.name, plot.past, plot.dot], [null, null, null, 'first']);
+  assert.deepEqual(ys({ points: plot.spend }), [null, null, null, 3, null, null, null]);
+  // Points sit in the middle of their day; a day still ahead has none.
+  assert.deepEqual(plot.first.points[1].x, at(2026, 9, 24, 12));
+  assert.equal(plot.first.points.length, 7);
+  const today = S.lineChart(S.computeStats([sample(day(29, 9), { h: 7, w: 8, u: 1 }), sample(day(29, 10), { h: 9, w: 8 })], 'day', NOW));
+  assert.deepEqual(today.first.points, [{ x: day(29, 9), y: 7 }, { x: day(29, 10), y: 9 }], 'Today has a point per reading');
+  assert.deepEqual(ys(today.second), [8, 8]);
+  assert.deepEqual(ys({ points: today.spend }), [1, null]);
+});
+
+test('lineChart, no 5-hour window at all: the top model and the week; the week alone carries the dot', () => {
+  const day = (h) => at(2026, 9, 29, h);
+  const both = S.lineChart(S.computeStats([sample(day(9), { w: 71, m: { Fable: 82, Opus: 3 } })], 'day', NOW));
+  assert.deepEqual([both.first.name, ys(both.first)], ['Fable', [82]]);
+  assert.deepEqual([both.second.name, ys(both.second), both.past, both.dot], [null, [71], null, 'first']);
+  const weekOnly = S.lineChart(S.computeStats([sample(day(9), { w: 12 })], 'day', NOW));
+  assert.deepEqual([weekOnly.first, ys(weekOnly.second), weekOnly.past, weekOnly.dot], [null, [12], null, 'second']);
+});
+
+test('lineChart after an account lost its 5h: the limit filling up is drawn, the end dot is on it, and the old 5h stays', () => {
+  const day = (d, h, mi = 0) => at(2026, 9, d, h, mi);
+  const st = S.computeStats([
+    sample(day(24, 10), { h: 32, w: 10, m: { Fable: 14 } }),
+    sample(day(25, 10), { h: 100, w: 30, m: { Fable: 37 } }), // the peak of the period, while it had a 5h
+    sample(day(26, 10), { h: 35, w: 51, m: { Fable: 54 } }),
+    sample(day(27, 2), { h: 0, w: 60, m: { Fable: 70 } }), // an idle 5h, until it went away that night
+    sample(day(27, 9), { w: 70, m: { Fable: 82 } }),
+    sample(day(28, 9), { w: 75, m: { Fable: 83 } }),
+    sample(day(29, 9), { w: 86, m: { Fable: 84 } }),
+  ], 'week', NOW);
+  assert.deepEqual([st.hasSession, st.endsInSession, st.allSession], [true, false, false]);
+  const plot = S.lineChart(st);
+  assert.equal(plot.first.name, 'Fable', 'the same line as Today, under the same name');
+  assert.deepEqual(ys(plot.first), [null, 14, 37, 54, 82, 83, 84], 'no 0 on the day the 5h went');
+  assert.deepEqual(ys(plot.second), [null, 10, 30, 51, 70, 75, 86]);
+  assert.equal(plot.past.name, null);
+  assert.deepEqual(ys(plot.past), [null, 32, 100, 35, 0, null, null], 'the old 5h, up to the day it stopped');
+  assert.equal(plot.dot, 'first');
+  // The peak of the period is on a line.
+  assert.ok([plot.first, plot.second, plot.past].some((line) => ys(line).includes(st.peak)), `peak ${st.peak}`);
+
+  const today = S.lineChart(S.computeStats([
+    sample(day(29, 2), { h: 5, w: 80, m: { Fable: 81 } }),
+    sample(day(29, 3), { w: 81, m: { Fable: 82 } }),
+  ], 'day', NOW));
+  assert.deepEqual([today.first.name, ys(today.first), ys(today.past), today.dot], ['Fable', [81, 82], [5, null], 'first']);
+});
+
+test('lineChart after a lost 5h with no model: the session stops without a dot and the week carries it', () => {
+  const day = (d) => at(2026, 9, d, 10);
+  const plot = S.lineChart(S.computeStats([sample(day(26), { h: 50, w: 10 }), sample(day(27), { h: 60, w: 11 }), sample(day(29), { w: 12 })], 'week', NOW));
+  assert.deepEqual([plot.first.name, ys(plot.first)], [null, [null, null, null, 50, 60, null, null]]);
+  assert.deepEqual(ys(plot.second), [null, null, null, 10, 11, null, 12]);
+  assert.deepEqual([plot.past, plot.dot], [null, 'second']);
+});
+
+test('lineChart with a 5h back at the end: the session is the first line again, gaps and all', () => {
+  const day = (d) => at(2026, 9, d, 10);
+  const plot = S.lineChart(S.computeStats([sample(day(27), { h: 50, w: 10, m: { Fable: 90 } }), sample(day(28), { w: 11, m: { Fable: 90 } }), sample(day(29), { h: 5, w: 12, m: { Fable: 90 } })], 'week', NOW));
+  assert.deepEqual([plot.first.name, ys(plot.first)], [null, [null, null, null, null, 50, null, 5]]);
+  assert.deepEqual([plot.past, plot.dot], [null, 'first']);
+});
+
+test('lineChart on a reset day, with no 5h: the lines keep the day\'s highest, so the peak is on them', () => {
+  const day = (d, h) => at(2026, 9, d, h);
+  const st = S.computeStats([
+    sample(day(27, 22), { w: 70, m: { Fable: 80 } }),
+    sample(day(28, 10), { w: 80, m: { Fable: 90 } }),
+    sample(day(28, 16), { w: 92, m: { Fable: 97 } }),
+    sample(day(28, 18), { w: 0, m: { Fable: 0 } }), // the week starts over
+    sample(day(28, 22), { w: 3, m: { Fable: 2 } }),
+    sample(day(29, 8), { w: 3, m: { Fable: 2 } }),
+  ], 'week', NOW);
+  const plot = S.lineChart(st);
+  assert.deepEqual(ys(plot.first), [null, null, null, null, 80, 97, 2]);
+  assert.deepEqual(ys(plot.second), [null, null, null, null, 70, 92, 3]);
+  assert.equal(st.peak, 97);
+  assert.equal(st.buckets[5].peak, 97, 'the bar says the same for that day');
+  // Today keeps every reading, so it shows the fall as it happened.
+  const today = S.lineChart(S.computeStats(st.samples, 'day', day(28, 23)));
+  assert.deepEqual(ys(today.first), [90, 97, 0, 2]);
+});
+
+test('lineChart on a reset day in a week that lost its 5h: the mix does not bring the fall back', () => {
+  const day = (d, h) => at(2026, 9, d, h);
+  const st = S.computeStats([
+    sample(day(25, 10), { h: 40, w: 92, m: { Fable: 97 } }),
+    sample(day(25, 18), { h: 1, w: 1, m: { Fable: 2 } }), // the week starts over, the 5h still there
+    sample(day(28, 10), { w: 20, m: { Fable: 30 } }),
+  ], 'week', NOW);
+  assert.deepEqual([st.hasSession, st.allSession], [true, false]);
+  const plot = S.lineChart(st);
+  assert.deepEqual(ys(plot.first), [null, null, 97, null, null, 30, null]);
+  assert.deepEqual(ys(plot.second), [null, null, 92, null, null, 20, null]);
+  assert.deepEqual(ys(plot.past), [null, null, 40, null, null, null, null]);
+});
+
+test('lineChart with no week in the period: the next model is the second line, under its name', () => {
+  const day = (h) => at(2026, 9, 29, h);
+  // A Team seat: 5h and only a per-model week.
+  const seat = S.lineChart(S.computeStats([sample(day(9), { h: 30, m: { Fable: 90 } }), sample(day(10), { h: 41, m: { Fable: 97 } })], 'day', NOW));
+  assert.deepEqual([seat.first.name, ys(seat.first)], [null, [30, 41]]);
+  assert.deepEqual([seat.second.name, ys(seat.second), seat.past, seat.dot], ['Fable', [90, 97], null, 'first']);
+  const week = S.lineChart(S.computeStats([sample(at(2026, 9, 28, 9), { h: 30, m: { Fable: 90 } }), sample(at(2026, 9, 28, 18), { h: 2, m: { Fable: 1 } }), sample(day(10), { h: 41, m: { Fable: 7 } })], 'week', NOW));
+  assert.deepEqual([week.second.name, ys(week.second)], ['Fable', [null, null, null, null, null, 90, 7]], 'its highest of the day: the only place it is seen');
+  // Two models and nothing else: the two fullest, as the rings.
+  const two = S.lineChart(S.computeStats([sample(day(9), { m: { Opus: 20, Fable: 90, Haiku: 5 } })], 'day', NOW));
+  assert.deepEqual([two.first.name, two.second.name, ys(two.first), ys(two.second)], ['Fable', 'Opus', [90], [20]]);
+  // After a lost 5h, a model already drawn is not drawn twice.
+  const lost = S.lineChart(S.computeStats([sample(day(9), { h: 5, m: { Fable: 90, Opus: 20 } }), sample(day(10), { m: { Fable: 91, Opus: 21 } })], 'day', NOW));
+  assert.deepEqual([lost.first.name, lost.second.name, ys(lost.past)], ['Fable', 'Opus', [5, null]]);
+  // One model and no other: nothing to add. A week anywhere in the period keeps the week's place.
+  const one = S.lineChart(S.computeStats([sample(day(9), { m: { Fable: 90 } })], 'day', NOW));
+  assert.deepEqual([one.first.name, one.second.name, ys(one.second)], ['Fable', null, [null]]);
+  const kept = S.lineChart(S.computeStats([sample(day(9), { h: 5, w: 1, m: { Fable: 90 } }), sample(day(10), { h: 6, m: { Fable: 91 } })], 'day', NOW));
+  assert.deepEqual([kept.second.name, ys(kept.second)], [null, [1, null]]);
+  // The 5h alone keeps its empty second line, as it always had.
+  const alone = S.lineChart(S.computeStats([sample(day(9), { h: 5 })], 'day', NOW));
+  assert.deepEqual([alone.first.name, alone.second.name, ys(alone.second)], [null, null, [null]]);
+});
+
+test('lineChart with nothing to draw: no first line, and a reading with no window draws no point', () => {
+  const plot = S.lineChart(S.computeStats([sample(at(2026, 9, 29, 9), { u: 3, l: 50 })], 'day', NOW));
+  assert.deepEqual([plot.first, ys(plot.second), plot.past, plot.dot], [null, [null], null, 'second']);
+  assert.deepEqual(ys({ points: plot.spend }), [3]);
 });
 
 test('a mixed day: the average weighs each reading\'s level by the time it held, near limit too', () => {
@@ -578,6 +727,27 @@ test('busiest bucket: highest peak, then more time in use, then the later one', 
   st = S.computeStats([sample(at(2026, 9, 25, 10), { h: 90 }), sample(at(2026, 9, 27, 10), { h: 60 })], 'week', NOW);
   assert.equal(st.busiest.start, at(2026, 9, 25));
   assert.equal(S.bucketLabel(st.busiest, 'week', true, { locale: 'en-US' }), 'Friday');
+});
+
+test('busiest with a stand-in goes by time in use: a weekly limit is highest just before its reset, not on the day of most use', () => {
+  const day = (d, h, mi = 0) => at(2026, 9, d, h, mi);
+  const rising = (d, from, n, fields) => Array.from({ length: n }, (_, i) => sample(day(d, 8) + i * 10 * MIN, fields(from + i)));
+  // Thursday: climbs for hours. Friday: one rise, to the highest value of the week.
+  const week = (fields) => S.computeStats([...rising(24, 5, 40, fields), sample(day(25, 10), fields(45)), sample(day(25, 10, 10), fields(46))], 'week', NOW);
+  const onlyWeek = week((w) => ({ w }));
+  assert.deepEqual([onlyWeek.buckets[1].peak, onlyWeek.buckets[2].peak], [44, 46]);
+  assert.ok(onlyWeek.buckets[1].inUseMs > onlyWeek.buckets[2].inUseMs);
+  assert.equal(onlyWeek.busiest.start, at(2026, 9, 24), 'Thursday, though Friday stands higher');
+  assert.equal(week((w) => ({ m: { Fable: w } })).busiest.start, at(2026, 9, 24), 'the same on a model alone');
+  // A week that mixes both is no different: it still ends on the weekly counter.
+  const mixed = S.computeStats([sample(day(23, 9), { h: 60, w: 3 }), ...rising(24, 5, 40, (w) => ({ w })), sample(day(25, 10), { w: 45 }), sample(day(25, 10, 10), { w: 46 })], 'week', NOW);
+  assert.equal(mixed.busiest.start, at(2026, 9, 24));
+  // A tie: the later one.
+  const tie = S.computeStats([sample(day(24, 9), { w: 1 }), sample(day(24, 9, 10), { w: 2 }), sample(day(25, 9), { w: 2 }), sample(day(25, 9, 10), { w: 3 })], 'week', NOW);
+  assert.equal(tie.busiest.start, at(2026, 9, 25));
+  // Nothing rose: no day was the busiest. With a 5h in every reading the peak still decides.
+  assert.equal(S.computeStats([sample(day(24, 9), { w: 40 }), sample(day(24, 9, 10), { w: 40 })], 'week', NOW).busiest, null);
+  assert.equal(S.computeStats([sample(day(24, 9), { h: 40 }), sample(day(24, 9, 10), { h: 40 })], 'week', NOW).busiest.start, at(2026, 9, 24));
 });
 
 test('coverage: observed time per bucket and in total; no data is none, not 0 %', () => {

@@ -39,7 +39,7 @@ reads or writes your credentials itself.
   7-day week, each with threshold marks, a live countdown and the reset time.
   The week ring marks where an even pace would be and tells you when you are
   ahead of it. Per-model weekly limits and extra-usage spend unfold under the
-  rings.
+  rings, and a per-model limit from 75 % also gets a badge.
 - **Every other account** as a row with one line per window, 5h and 7d: a
   thin bar, the percentage and the time to that window's reset. So every
   account shows in how many days its week starts over (hover for the exact
@@ -55,7 +55,7 @@ reads or writes your credentials itself.
 ### Accounts without a 5-hour limit
 
 <p align="center">
-  <img src="docs/ultra.jpg" alt="The popover for an account with no 5-hour limit, in dark and light mode: two rings, Fable · week at 82 % and Week · all models at 71 %, with No 5-hour limit under them. Below, other accounts as rows: one with 5h and 7d lines, one with a single 7d line, one with Fable and 7d lines. A badge says Login expires in 2d 7h.">
+  <img src="docs/ultra.jpg" alt="The popover for an account with no 5-hour limit, in dark and light mode: two rings, Fable · week at 82 % and Week · all models at 71 %, with No 5-hour limit under them. Below, other accounts as rows: one with 5h and 7d lines, one with a single 7d line, one with Fable and 7d lines, one with 5h and Fable lines. Badges say Login expires in 2d 10h and Re-login.">
 </p>
 
 Claude's [Ultra plan](https://support.claude.com/en/articles/17728952-what-is-the-ultra-plan)
@@ -92,8 +92,9 @@ it: **Settings → Rings**.
 The graph button opens **Today**, **Week** or **Month** for any account, as a
 line, bars or summary cards: peak, average, time near the limit, time in use
 and spend. With no 5-hour window, the chart shows the week and the fullest
-model limit, and peak and average read the fuller of them. The history stays
-on this Mac for 32 days (see [Privacy](#privacy)).
+model limit, and peak and average read the fuller of them. After an account
+loses that window, its old session stays on the chart as a faint line. The
+history stays on this Mac for 32 days (see [Privacy](#privacy)).
 
 ### Menu bar
 
@@ -251,7 +252,8 @@ store the new login in its slot:
 cswap add --slot 2      # the account's number, as in the widget's menu or cswap list
 ```
 
-The badge's tooltip has the command with the right number.
+The **Login expires** badge's tooltip has the command with the right number;
+**Re-login** says plain `cswap add`, which finds the account's slot by itself.
 
 </details>
 
