@@ -98,6 +98,10 @@
     return name ? `${name} ${fmtPct(b.peak)}` : fmtPct(b.peak);
   };
 
+  // In use counts the pairs where a limit rose. A weekly limit moves rarely, in
+  // whole percents, so a period with a stand-in for the 5h says the figure reads low.
+  const inUseTip = (stats) => t(stats.allSession ? 'stats.inUseTip' : 'stats.inUseTipLow');
+
   const fmtDuration = (ms) => (isNum(ms) ? Stats.fmtDurationMs(ms, t) : '—');
   const fmtMoney = (amount, currency) => I18n.formatMoney(I18nDom.locale(), amount, currency) || '—';
   const labelOpts = () => ({ locale: I18nDom.locale(), hour12: I18nDom.hour12() });
@@ -514,7 +518,7 @@
       return;
     }
 
-    const inUse = [t('stats.inUse'), fmtDuration(stats.inUseMs), t('stats.inUseTip')];
+    const inUse = [t('stats.inUse'), fmtDuration(stats.inUseMs), inUseTip(stats)];
     const items =
       look === 'bars'
         ? [
@@ -553,13 +557,10 @@
   }
 
   // ── A: line ─────────────────────────────────────────────────────
-  // Session (5h) and week (7d) over the period. Today uses every reading; a
-  // week or a month one point per day (the session's peak, the week's level at
-  // the day's end), so five-hour windows don't turn the line into a saw.
-  // Spend gets its own money axis when the account spent in the window.
-  // The first line is only ever a real 5h. A period without one has the model
-  // that stands highest in its place, under its name; with no model either
-  // there is no first line, and the week carries the end dot.
+  // Session (5h) and week (7d) over the period, or what stands in for them:
+  // Stats.lineChart says what is drawn, this paints it. Each line is under its
+  // own name in the tooltip. Spend gets its own money axis when the account
+  // spent in the window.
 
   function renderLineChart(stats) {
     const Chart = window.Chart;
@@ -567,14 +568,7 @@
     const { win, period } = stats;
     const perDay = period !== 'day';
     const mid = (b) => b.start + (b.end - b.start) / 2;
-    const days = stats.buckets.filter((b) => !b.future);
-    const readings = perDay ? [] : Stats.thinSamples(stats.samples);
-    const val = (v) => (isNum(v) ? v : null);
-    const model = stats.hasSession ? null : stats.topModel;
-    const firstOfDay = (b) => (model ? val(b.modelLast && b.modelLast[model]) : b.sessionPeak);
-    const firstOfReading = (e) => val(model ? e.m && e.m[model] : e.h);
-    const firstPts = perDay ? days.map((b) => ({ x: mid(b), y: firstOfDay(b) })) : readings.map((e) => ({ x: e.t * 1000, y: firstOfReading(e) }));
-    const weekPts = perDay ? days.map((b) => ({ x: mid(b), y: b.weekLast })) : readings.map((e) => ({ x: e.t * 1000, y: val(e.w) }));
+    const plot = Stats.lineChart(stats);
     // A reading with no neighbour it is drawn to (a gap on both sides) would
     // be invisible as a line; it gets a small dot.
     const gap = perDay ? Infinity : Stats.GAP_MAX_MS;
@@ -584,7 +578,7 @@
       const p = pts[c.dataIndex];
       return Boolean(p) && p.y !== null && !joined(p, pts[c.dataIndex - 1]) && !joined(p, pts[c.dataIndex + 1]);
     };
-    // The line ends in a dot: where things stand now
+    // The line ends in a dot: where things stand now (per day: today's point)
     const endDot = (pts) => {
       const last = pts.reduce((found, p, i) => (p.y !== null ? i : found), -1);
       return (c) => (c.dataIndex === last ? 3 : lone(c) ? 2 : 0);
@@ -602,10 +596,10 @@
       // watched in between (app closed, asleep), so the line breaks there.
       spanGaps: perDay ? false : Stats.GAP_MAX_MS,
     };
-    const first = {
+    const first = plot.first && {
       ...line,
-      label: model || t('chart.session'),
-      data: firstPts,
+      label: plot.first.name || t('chart.session'),
+      data: plot.first.points,
       borderColor: ink.session,
       // A soft wash under the first line gives the chart a surface without a second colour
       backgroundColor(context) {
@@ -617,15 +611,18 @@
         return wash;
       },
       fill: 'origin',
-      pointRadius: endDot(firstPts),
     };
-    const week = { ...line, label: t('chart.weekly'), data: weekPts, borderColor: ink.weekly, backgroundColor: 'transparent' };
-    const datasets = stats.hasSession || model ? [first, week] : [{ ...week, pointRadius: endDot(weekPts) }];
+    const second = { ...line, label: plot.second.name || t('chart.weekly'), data: plot.second.points, borderColor: ink.weekly, backgroundColor: 'transparent' };
+    const ending = plot.dot === 'first' ? first : second;
+    ending.pointRadius = endDot(ending.data);
+    // The 5h the account no longer has: quiet, it is not what counts now
+    const past = plot.past && { ...line, label: t('chart.session'), data: plot.past.points, borderColor: inkAlpha(ink.session, 0.35), borderWidth: 1.5, backgroundColor: 'transparent' };
+    const datasets = [first, second, past].filter(Boolean);
 
     const spend = stats.spend;
     let spendShown = false;
     if (spend) {
-      const spendPts = perDay ? days.map((b) => ({ x: mid(b), y: b.spendLast })) : readings.map((e) => ({ x: e.t * 1000, y: val(e.u) }));
+      const spendPts = plot.spend;
       if (spendPts.some((p) => p.y > 0)) {
         spendShown = true;
         datasets.push({
@@ -885,7 +882,7 @@
     const cards = [
       { label: t('stats.peak'), value: fmtPct(stats.peak), series: shown.map((b) => b.peak), tone: 's5h' },
       { label: t('stats.average'), value: fmtPct(stats.avg), series: shown.map((b) => b.avg), tone: 's7d' },
-      { label: t('stats.inUse'), ms: stats.inUseMs, series: shown.map((b) => orNull(b, b.inUseMs)), tone: 's7d', tip: t('stats.inUseTip') },
+      { label: t('stats.inUse'), ms: stats.inUseMs, series: shown.map((b) => orNull(b, b.inUseMs)), tone: 's7d', tip: inUseTip(stats) },
     ];
     const n = stats.buckets.length;
     const values = [];

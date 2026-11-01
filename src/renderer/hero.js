@@ -631,12 +631,13 @@
 
     const { usage, stale } = Usage.effectiveUsage(row);
     current = { row, usage, stale, settings: ctx.settings || {} };
-    // Pace has its own line under the week ring; Active is what the hero is.
-    const pills = Usage.badges(row, t).filter((b) => b.key !== 'active' && b.key !== 'pace');
+    const now = Date.now();
+    // Pace has its own line under the week ring; Active is what the hero is. A
+    // model near its limit with no ring of its own says so, as it did on its row.
+    const pills = [...Usage.badges(row, t).filter((b) => b.key !== 'active' && b.key !== 'pace'), ...Usage.modelBadges(usage, t, now)];
     parts.status.replaceChildren(...pills.map((b) => h('span', { class: `pill ${b.tone}`, title: b.title }, b.label)));
     parts.status.parentNode.classList.toggle('has-pills', pills.length > 0);
 
-    const now = Date.now();
     const { shown } = Usage.mainWindows(usage);
     const hasUsage = shown.length > 0;
     parts.gauges.hidden = false;

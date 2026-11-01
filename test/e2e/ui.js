@@ -12,7 +12,8 @@
 //                                     .acct-bars: .lbl, .compact-bar-fill, .pct, .acct-reset per line
 //   #screen[data-phase]               setup / error screens (h2, .cmd, .actions)
 //   #stats[data-style]                the statistics (#stats-btn opens them): #stats-account,
-//                                     #stats-style, canvas#stats-canvas, .stats-item, .heat-cell
+//                                     #stats-period, #stats-style, canvas#stats-canvas, .stats-item,
+//                                     .stats-card, .heat-cell
 //   #best, #next in #footer; #toast; #banner; #subtitle; #refresh; #menu
 //
 // Functions passed to t.js() are serialised into the page: they see only
@@ -160,6 +161,7 @@ module.exports = function ui(t) {
         return Boolean(option);
       }, name),
     statsLook: (look) => t.js((l) => (document.querySelector(`#stats-style [data-stats-style=${l}]`).click(), true), look),
+    statsPeriod: (period) => t.js((p) => (document.querySelector(`#stats-period [data-period=${p}]`).click(), true), period),
     // What the view shows for the current choice: its summary, what Chart.js was
     // handed (a line chart's lines, the bars' pills) and the strip's titles.
     stats: () =>
@@ -170,11 +172,12 @@ module.exports = function ui(t) {
         return {
           look: root.dataset.style,
           items: [...root.querySelectorAll('.stats-item')].map((i) => ({ label: i.querySelector('.stats-item-label').textContent, value: i.querySelector('.stats-item-value').textContent, tip: i.title })),
+          cards: [...root.querySelectorAll('.stats-card')].map((c) => ({ label: c.querySelector('.stats-card-label').textContent, tip: c.title })),
           lines:
             type === 'line'
               ? chart.data.datasets.map((d, n) => {
                   const last = d.data.reduce((found, p, i) => (p.y !== null ? i : found), -1);
-                  return { label: d.label, last: last < 0 ? null : d.data[last].y, endDot: last >= 0 && chart.getDatasetMeta(n).data[last].options.radius === 3 };
+                  return { label: d.label, ys: d.data.map((p) => p.y), last: last < 0 ? null : d.data[last].y, endDot: last >= 0 && chart.getDatasetMeta(n).data[last].options.radius === 3 };
                 })
               : [],
           pills: type === 'bar' ? chart.data.datasets[0].data.flatMap((v, i) => (v ? [chart.config.options.plugins.tooltip.callbacks.label({ dataIndex: i })] : [])) : [],

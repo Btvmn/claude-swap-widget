@@ -12,13 +12,14 @@
 //   { t: <epoch seconds>, a?, h?: 5h pct, w?: 7d pct, r5?, m?: {name: pct}, u?: spend, l?: limit }
 // A missing value is missing, never 0: it neither drops nor rises.
 //
-// Peak, Average, Near limit and the busiest bucket read a reading's level: its
-// 5h, else the fullest of its weekly limits (the 7d and the model windows). An
-// account with no 5-hour window keeps its cards, bars and strip that way, and
-// they agree with the chart's lines; a reading with a 5h behaves as if the
-// others were not there. What must not show a stand-in reads `sessionPeak` (the
-// strict 5h peak); `peakWindow` names the limit a bucket's stand-in came from,
-// `allSession` says a period has none.
+// Peak, Average and Near limit read a reading's level: its 5h, else the fullest
+// of its weekly limits (the 7d and the model windows). An account with no 5-hour
+// window keeps its cards, bars and strip that way, and they agree with the
+// chart's lines (lineChart); a reading with a 5h behaves as if the others were
+// not there. What must not show a stand-in reads `sessionPeak` (the strict 5h
+// peak); `peakWindow` names the limit a bucket's stand-in came from, `allSession`
+// says a period has none. A period with a stand-in ranks Busiest by time in use
+// (see computeStats).
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.Stats = factory();
@@ -146,7 +147,8 @@
       sessionPeak: null, // the highest 5h, nothing else
       peakWindow: null, // '7d' or a model's name when `peak` is not a 5h value
       weekLast: null, // where the week stood at the end of the bucket
-      modelLast: null, // { name: pct }: where each model stood at the end of the bucket
+      weekPeak: null, // the highest the week stood in the bucket
+      modelPeak: null, // { name: pct }: the highest each model stood in the bucket
       avg: null,
       observedMs: 0,
       inUseMs: 0,
@@ -162,6 +164,8 @@
     let peak = null;
     let hasSession = false;
     let allSession = true; // no reading in the window stands in with a 7d or a model
+    let endsInSession = false; // the latest reading with a level has a 5h
+    let hasWeek = false;
     const modelLatest = new Map(); // name → its last reading in the window
     let observedMs = 0;
     let inUseMs = 0;
@@ -208,15 +212,21 @@
         total.sum += lv;
         total.n++;
         if (!isNum(e.h)) allSession = false;
+        endsInSession = isNum(e.h);
       }
       if (isNum(e.h)) {
         b.sessionPeak = b.sessionPeak === null ? e.h : Math.max(b.sessionPeak, e.h);
         hasSession = true;
       }
-      if (isNum(e.w)) b.weekLast = e.w;
+      if (isNum(e.w)) {
+        b.weekLast = e.w;
+        b.weekPeak = b.weekPeak === null ? e.w : Math.max(b.weekPeak, e.w);
+        hasWeek = true;
+      }
       for (const name of modelNames(e)) {
-        if (!b.modelLast) b.modelLast = {};
-        b.modelLast[name] = e.m[name];
+        if (!b.modelPeak) b.modelPeak = {};
+        const held = b.modelPeak[name];
+        b.modelPeak[name] = isNum(held) ? Math.max(held, e.m[name]) : e.m[name];
         modelLatest.set(name, e.m[name]);
       }
       if (isNum(e.l)) limit = e.l;
@@ -263,19 +273,20 @@
     });
 
     // Busiest bucket: the highest peak; on a tie the one with more time in
-    // use, then the later one.
+    // use, then the later one. A weekly limit only rises until its reset, so
+    // its peak names the last day before one: a period with a stand-in goes by
+    // time in use, the later one on a tie, and has none when nothing rose.
     let busiest = null;
     for (const b of buckets) {
       if (b.peak === null) continue;
-      if (!busiest || b.peak > busiest.peak || (b.peak === busiest.peak && b.inUseMs >= busiest.inUseMs)) busiest = b;
+      if (allSession) {
+        if (!busiest || b.peak > busiest.peak || (b.peak === busiest.peak && b.inUseMs >= busiest.inUseMs)) busiest = b;
+      } else if (b.inUseMs > 0 && (!busiest || b.inUseMs >= busiest.inUseMs)) busiest = b;
     }
 
-    // The model that stands highest at its last reading; a tie keeps the one
-    // seen first.
-    let topModel = null;
-    for (const [name, pct] of modelLatest) {
-      if (topModel === null || pct > modelLatest.get(topModel)) topModel = name;
-    }
+    // The models by where they stand at their last reading, highest first; a
+    // tie keeps the one seen first.
+    const models = [...modelLatest.keys()].sort((a, b) => modelLatest.get(b) - modelLatest.get(a));
 
     const elapsedMs = Math.max(0, Math.min(nowMs, win.end) - win.start);
     return {
@@ -295,7 +306,10 @@
       busiest,
       hasSession,
       allSession,
-      topModel,
+      endsInSession,
+      hasWeek,
+      models,
+      topModel: models.length ? models[0] : null,
       currentIndex: buckets.findIndex((b) => b.current),
     };
   }
@@ -330,6 +344,45 @@
     }
     if (current) out.push(current);
     return out;
+  }
+
+  // What the line chart draws, as data; the view only paints it. A line is
+  // { name, points: [{x, y}] }, its name null where it is the session or the week.
+  // - first: the session, while the period ends with one. A period that ended
+  //   without a 5h has its top model here instead, the limit filling up now, as
+  //   on Today, so the colour keeps its meaning and the end dot lands on what
+  //   still counts. null when there is neither.
+  // - second: the week; with none in the period the next model, as the hero's
+  //   second ring does.
+  // - past: the 5h such a period had until it stopped, so that a peak from back
+  //   then is still on a line.
+  // - dot: which of first and second gets the end dot, the one that reaches
+  //   furthest.
+  // Today has a point per reading. A week or a month has one per day: the
+  // session's peak, the week's level at the day's end (so five-hour windows don't
+  // make a saw of the line), and, once a weekly limit can be the level, its
+  // highest of the day: on a reset day the line must not fall away from the peak.
+  function lineChart(stats) {
+    const perDay = stats.period !== 'day';
+    const days = stats.buckets.filter((b) => !b.future);
+    const readings = perDay ? [] : thinSamples(stats.samples);
+    const known = (v) => (isNum(v) ? v : null);
+    const series = (ofDay, ofReading) =>
+      perDay ? days.map((b) => ({ x: b.start + (b.end - b.start) / 2, y: known(ofDay(b)) })) : readings.map((e) => ({ x: e.t * 1000, y: known(ofReading(e)) }));
+    const session = () => ({ name: null, points: series((b) => b.sessionPeak, (e) => e.h) });
+    const modelLine = (name) => ({ name, points: series((b) => b.modelPeak && b.modelPeak[name], (e) => e.m && e.m[name]) });
+    const model = stats.endsInSession ? null : stats.topModel;
+    const next = stats.hasWeek ? null : stats.models.find((name) => name !== model);
+    const first = model ? modelLine(model) : stats.hasSession ? session() : null;
+    const second = next ? modelLine(next) : { name: null, points: series((b) => (stats.allSession ? b.weekLast : b.weekPeak), (e) => e.w) };
+    const reach = (line) => line.points.reduce((found, p, i) => (p.y !== null ? i : found), -1);
+    return {
+      first,
+      second,
+      past: model && stats.hasSession ? session() : null,
+      spend: series((b) => b.spendLast, (e) => e.u),
+      dot: first && reach(first) >= reach(second) ? 'first' : 'second',
+    };
   }
 
   // ---- labels ----
@@ -398,6 +451,7 @@
     DANGER,
     statsWindow,
     computeStats,
+    lineChart,
     thinSamples,
     bucketLabel,
     fmtDurationMs,

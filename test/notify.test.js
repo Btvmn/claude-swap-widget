@@ -392,6 +392,23 @@ test('attach: starts silent when the setting is off', () => {
   assert.deepEqual(posted.map((n) => n.options.body), ['work: session at 91% — almost out']);
 });
 
+test('attach: a login that waited while notifications were off is posted once they are on', () => {
+  posted.length = 0;
+  const service = new EventEmitter();
+  const row = { ...acct(1, 10, 10, { alias: 'work' }), loginExpiresAt: new Date(Date.now() + 10 * 3_600_000).toISOString() };
+  service.state = state([row]);
+  const bus = new EventEmitter();
+  const t = I18n.translator('en');
+  attach({ bus, service, t: (k, v) => t(k, v), getSettings: () => ({ notifications: false }), showUi() {} });
+  service.emit('state', state([row]));
+  assert.equal(posted.length, 0, 'off');
+  bus.emit('setting:notifications', true, false);
+  service.emit('state', state([row]));
+  service.emit('state', state([row]));
+  assert.equal(posted.length, 1, 'once');
+  assert.match(posted[0].options.title, /^work: login expires in /);
+});
+
 // ── per-model weekly windows (usage.scoped) ─────────────────────────────────
 
 // Alice (work) at 10 % / 10 % with one model window.
@@ -614,19 +631,29 @@ test('a login is told when it comes inside the 3 days; a new date is told again'
   assert.deepEqual(feed(s(80)), [], 'a date already told is not told again');
 });
 
-test('expired, disabled, or a status that already says it: no login notification', () => {
+test('expired, parked, or a status that already says it: no login notification', () => {
   const { feed } = notifier();
   assert.deepEqual(feed(state([withLogin(1, -1), withLogin(2, -48, { usageStatus: 'token_expired' })])), [], 'expired never');
   assert.deepEqual(feed(state([withLogin(1, 0)])), [], 'expiring this very moment');
-  assert.deepEqual(feed(state([withLogin(2, 10, { disabled: true })])), [], 'disabled never');
-  assert.deepEqual(feed(state([withLogin(2, 10, { disabled: true })], 2)), [], 'also when it is the active one');
+  assert.deepEqual(feed(state([withLogin(2, 10, { disabled: true })])), [], 'disabled and not in use: never');
   for (const usageStatus of ['relogin_required', 'no_credentials', 'api_key']) {
     assert.deepEqual(feed(state([withLogin(3, 10, { usageStatus, usage: null })])), [], usageStatus);
   }
+  // The date under a mismatch is the other account's, and a switch repairs this one.
+  assert.deepEqual(feed(state([withLogin(3, 10, { usageStatus: 'foreign_credential' })], 3)), [], 'foreign_credential');
   assert.deepEqual(feed(state([acct(4, 10, 10)])), [], 'no date');
   assert.deepEqual(feed(state([{ ...acct(4, 10, 10), loginExpiresAt: 'soon' }])), [], 'a date that does not parse');
   // A disabled account comes back into the rotation: now it is told.
   assert.deepEqual(feed(state([withLogin(2, 10)])), [['bob@example.com: login expires in 10h', BOB_BODY]]);
+});
+
+test('a disabled account that is the active one is in use: its login is told', () => {
+  const { feed } = notifier();
+  const inUse = state([acct(1, 10, 10), withLogin(2, 10, { disabled: true })], 2);
+  assert.deepEqual(feed(inUse), [['bob@example.com: login expires in 10h', BOB_BODY]]);
+  assert.deepEqual(feed(inUse), [], 'once');
+  // Switching away parks it again; the date stays told.
+  assert.deepEqual(feed(state([acct(1, 10, 10), withLogin(2, 10, { disabled: true })], 1), inUse), []);
 });
 
 test('a login date on a stale or inactive row still counts; a doubtful list waits', () => {
@@ -636,21 +663,44 @@ test('a login date on a stale or inactive row still counts; a doubtful list wait
   assert.deepEqual(feed(state([stale])), [['bob@example.com: login expires in 2d 12h', BOB_BODY]]);
 });
 
-test('with notifications off the login is noted, not shown, and not replayed', () => {
+test('with notifications off a login waits: it is told once they are on, and only once', () => {
   const { n, feed, shown } = notifier({ enabled: false });
   const s = state([withLogin(2, 60)]);
-  assert.deepEqual(feed(s), [], 'off');
-  n.setEnabled(true);
-  assert.deepEqual(feed(s), [], 'on again: nothing old');
+  assert.deepEqual(feed(s, s), [], 'off');
   assert.equal(shown.length, 0);
+  n.setEnabled(true);
+  assert.deepEqual(feed(s), [['bob@example.com: login expires in 2d 12h', BOB_BODY]], 'on: nothing was shown yet, so it is told');
+  assert.deepEqual(feed(s), [], 'once');
+  // A date told while on stays told, through off and on.
+  n.setEnabled(false);
+  assert.deepEqual(feed(s), []);
+  n.setEnabled(true);
+  assert.deepEqual(feed(s), [], 'on again: it was told');
   // A new date while on speaks.
   assert.deepEqual(feed(state([withLogin(2, 50)])), [['bob@example.com: login expires in 2d 2h', BOB_BODY]]);
 });
 
+test('a login that comes inside the 3 days, or lapses, while notifications are off', () => {
+  const { n, feed, tick } = notifier({ enabled: false });
+  const s = state([withLogin(2, 80)]);
+  assert.deepEqual(feed(s), [], 'off, 80 h left');
+  tick(10 * 3_600_000);
+  assert.deepEqual(feed(s), [], 'off, 70 h left');
+  n.setEnabled(true);
+  assert.deepEqual(feed(s), [['bob@example.com: login expires in 2d 22h', BOB_BODY]], 'told with the time left now');
+  // Lapsed before they came back on: only the badge says so, as ever.
+  const late = notifier({ enabled: false });
+  const lapsing = state([withLogin(2, 1)]);
+  late.feed(lapsing);
+  late.tick(2 * 3_600_000);
+  late.n.setEnabled(true);
+  assert.deepEqual(late.feed(lapsing), []);
+});
+
 test('the login texts in every language, with the slot it applies to', () => {
   const want = {
-    ru: ['bob@example.com: вход истекает через 10 ч', 'Войдите в этот аккаунт заново в Claude Code, затем выполните: cswap add --slot 2'],
-    uk: ['bob@example.com: вхід спливає через 10 год', 'Увійдіть у цей акаунт знову в Claude Code, потім виконайте: cswap add --slot 2'],
+    ru: ['bob@example.com: через 10 ч истекает срок действия входа', 'Войдите в этот аккаунт заново в Claude Code, затем выполните: cswap add --slot 2'],
+    uk: ['bob@example.com: через 10 год спливає термін дії входу', 'Увійдіть у цей акаунт знову в Claude Code, потім виконайте: cswap add --slot 2'],
     de: ['bob@example.com: Anmeldung läuft in 10 Std. ab', 'Melde dich in Claude Code neu bei diesem Konto an und führe dann aus: cswap add --slot 2'],
   };
   for (const [lang, expected] of Object.entries(want)) {

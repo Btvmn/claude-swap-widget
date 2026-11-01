@@ -52,6 +52,26 @@ test('secondsUntil parses cswap timestamps (microseconds, +00:00) and clamps at 
   assert.equal(U.secondsUntil('soon', now), null);
 });
 
+test('modelBadges: a model near its limit with no ring or line of its own, not after its reset', () => {
+  const NOW = Date.parse('2026-11-01T12:00:00Z');
+  const ahead = '2026-11-03T12:00:00Z';
+  const win = (pct, resetsAt = ahead) => ({ pct, resetsAt });
+  const keys = (usage) => U.modelBadges(usage, 'en', NOW).map((b) => [b.key, b.tone, b.label]);
+  const normal = (...scoped) => ({ fiveHour: win(20), sevenDay: win(34), scoped });
+  assert.deepEqual(keys(normal({ ...win(74), name: 'Fable' })), [], 'under the warn line');
+  assert.deepEqual(keys(normal({ ...win(76), name: 'Fable' })), [['model:Fable', 'warn', 'Fable 76%']]);
+  assert.deepEqual(keys(normal({ ...win(100), name: 'Fable' })), [['model:Fable', 'crit', 'Fable 100%']]);
+  assert.deepEqual(keys(normal({ ...win(40), name: 'Opus' }, { ...win(95), name: 'Fable' }, { ...win(76), name: 'Haiku' })).map((k) => k[0]), ['model:Fable', 'model:Haiku'], 'in cswap\'s order');
+  // With a ring or a line of its own it needs no pill; the one left without does.
+  assert.deepEqual(keys({ sevenDay: win(71), scoped: [{ ...win(95), name: 'Fable' }] }), []);
+  assert.deepEqual(keys({ sevenDay: win(71), scoped: [{ ...win(95), name: 'Fable' }, { ...win(80), name: 'Opus' }] }).map((k) => k[0]), ['model:Opus']);
+  assert.deepEqual(keys(normal({ ...win(95, '2026-11-01T11:59:00Z'), name: 'Fable' })), [], 'its value no longer applies after the reset');
+  assert.deepEqual(keys(normal({ pct: 95 })), [['model:?', 'crit', '? 95%']], 'no name, no reset');
+  for (const none of [null, undefined, {}, { scoped: 'x' }, { scoped: [null, {}, { name: 'Fable' }] }]) assert.deepEqual(U.modelBadges(none, 'en', NOW), [], JSON.stringify(none));
+  const [ru] = U.modelBadges(normal({ ...win(95), name: 'Fable' }), 'ru', NOW);
+  assert.deepEqual([ru.label, ru.title], ['Fable 95%', 'Fable · неделя']);
+});
+
 test('badges', () => {
   const keys = (row) => U.badges(row).map((b) => b.key);
   assert.deepEqual(keys({ active: true, usageStatus: 'ok', usage: fresh }), ['active']);
@@ -608,12 +628,12 @@ test('badges: the login pill follows the status, in amber then red', () => {
   assert.deepEqual(login(24), { key: 'login', label: 'Login expires in 1d', tone: 'warn', title });
   assert.deepEqual(login(10), { key: 'login', label: 'Login expires in 10h', tone: 'crit', title }, 'red under 24 h');
   assert.deepEqual(login(-48), { key: 'login', label: 'Login expired', tone: 'crit', title });
-  // Those statuses already say it, or there is no login to lapse
-  for (const usageStatus of ['relogin_required', 'no_credentials', 'api_key']) {
+  // Those statuses already say it, there is no login to lapse, or the date is another account's
+  for (const usageStatus of ['relogin_required', 'no_credentials', 'api_key', 'foreign_credential']) {
     assert.equal(login(10, { usageStatus }), undefined, usageStatus);
     assert.equal(login(-48, { usageStatus }), undefined, usageStatus);
   }
-  for (const usageStatus of ['token_expired', 'keychain_unavailable', 'foreign_credential', 'unavailable', 'rate_limited_by_moon']) {
+  for (const usageStatus of ['token_expired', 'keychain_unavailable', 'unavailable', 'rate_limited_by_moon']) {
     assert.ok(login(10, { usageStatus }), usageStatus);
   }
   // Right after the status badge
@@ -624,7 +644,7 @@ test('badges: the login pill follows the status, in amber then red', () => {
   assert.equal(U.badges({ number: 3, usage: fresh, loginExpiresAt: '2020-01-01T00:00:00Z' })[0].label, 'Login expired');
   // In the translator's language
   const tip = U.badges({ number: 3, usage: fresh, loginExpiresAt: hoursFromNow(60) }, ru, NOW)[0];
-  assert.equal(tip.label, 'Вход истекает через 2 д 12 ч');
+  assert.equal(tip.label, 'Срок действия входа истекает через 2 д 12 ч');
   assert.equal(tip.title, 'Войдите в этот аккаунт заново в Claude Code, затем выполните: cswap add --slot 3');
   assert.equal(U.badges({ number: 3, usage: fresh, loginExpiresAt: hoursFromNow(-1) }, de, NOW)[0].label, 'Anmeldung abgelaufen');
 });
@@ -635,10 +655,10 @@ test('menuLabel: the login note after the status, before stale; disabled rows ke
   assert.equal(line({ loginExpiresAt: hoursFromNow(-1) }), '2  b@x  — login expired');
   assert.equal(line({ loginExpiresAt: hoursFromNow(100) }), '2  b@x');
   assert.equal(line({ disabled: true, usageStatus: 'token_expired', lastGoodUsage: { sevenDay: win(33) }, loginExpiresAt: hoursFromNow(10) }), '2  b@x  7d 33% (2d 6h)  — disabled, token expired, login expires in 10h, stale');
-  for (const usageStatus of ['relogin_required', 'no_credentials', 'api_key']) {
+  for (const usageStatus of ['relogin_required', 'no_credentials', 'api_key', 'foreign_credential']) {
     assert.doesNotMatch(line({ usageStatus, loginExpiresAt: hoursFromNow(-1) }), /login expire/, usageStatus);
   }
-  assert.equal(line({ loginExpiresAt: hoursFromNow(10) }, ru), '2  b@x  — вход истекает через 10 ч');
+  assert.equal(line({ loginExpiresAt: hoursFromNow(10) }, ru), '2  b@x  — срок действия входа истекает через 10 ч');
   assert.equal(line({ loginExpiresAt: hoursFromNow(-1) }, de), '2  b@x  — Anmeldung abgelaufen');
 });
 
@@ -783,14 +803,30 @@ test('trayInfo: the first line ends with the login, under the conditions of the 
   assert.equal(tip(100), 'work · 7d 71% · Fable 82% · no 5-hour limit');
   assert.equal(tip(60, {}, SHAPES.normal), 'work · 5h 20% · 7d 81% · login expires in 2d 12h');
   assert.equal(tip(60, { usageAgeSeconds: 540 }), 'work · 7d 71% · Fable 82% · no 5-hour limit · 9m old · login expires in 2d 12h');
-  for (const usageStatus of ['relogin_required', 'no_credentials', 'api_key']) {
+  for (const usageStatus of ['relogin_required', 'no_credentials', 'api_key', 'foreign_credential']) {
     assert.doesNotMatch(tip(-1, { usageStatus }), /login expire/, usageStatus);
   }
-  assert.equal(trayOf(SHAPES.normal, {}, { loginExpiresAt: hoursFromNow(60) }, {}, ru).tooltip, 'work · 5 ч 20% · 7 дн 81% · вход истекает через 2 д 12 ч');
+  assert.equal(trayOf(SHAPES.normal, {}, { loginExpiresAt: hoursFromNow(60) }, {}, ru).tooltip, 'work · 5 ч 20% · 7 дн 81% · срок действия входа истекает через 2 д 12 ч');
   assert.equal(trayOf(SHAPES.normal, {}, { loginExpiresAt: hoursFromNow(-1) }, {}, de).tooltip, 'work · 5 Std. 20 % · 7 T 81 % · Anmeldung abgelaufen');
   // only the active account is on this line
   const other = accountRow(SHAPES.normal, { active: false, loginExpiresAt: hoursFromNow(-1) });
   assert.equal(U.trayInfo({ phase: 'ok', accounts: [other, accountRow(SHAPES.normal)] }, NOW).tooltip, 'work · 5h 20% · 7d 81%');
+});
+
+test('trayInfo: a login that is gone is still on the first line, as re-login', () => {
+  const walk = (extra, usage = SHAPES.normal, tr) => trayOf(usage, {}, extra, {}, tr).tooltip;
+  const gone = { usageStatus: 'relogin_required', loginExpiresAt: hoursFromNow(-3) };
+  const lastGood = { ...gone, lastGoodUsage: SHAPES.normal, lastGoodAgeSeconds: 300 };
+  // The lapse from start to end: it never stops being said.
+  assert.equal(walk({ loginExpiresAt: hoursFromNow(1) }), 'work · 5h 20% · 7d 81% · login expires in 1h');
+  assert.equal(walk({ loginExpiresAt: hoursFromNow(-1) }), 'work · 5h 20% · 7d 81% · login expired');
+  assert.equal(walk(lastGood, null), 'work · 5h 20% · 7d 81% · stale · re-login');
+  // With nothing left to show it is all the tooltip has to say.
+  assert.equal(walk(gone, null), 'work · re-login');
+  assert.equal(walk(lastGood, null, ru), 'work · 5 ч 20% · 7 дн 81% · устарело · нужен вход');
+  assert.equal(walk(lastGood, null, de), 'work · 5 Std. 20 % · 7 T 81 % · veraltet · Anmeldung nötig');
+  // Other statuses keep their tooltip.
+  assert.equal(walk({ usageStatus: 'token_expired' }), 'work · 5h 20% · 7d 81%');
 });
 
 test('trayInfo tooltipLines: one line per model with its reset ahead, only where a model stands in', () => {

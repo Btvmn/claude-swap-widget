@@ -37,17 +37,18 @@
 //   reached" once per window. A model at 100 % blocks neither "limit reached"
 //   nor "available again", and "all accounts" leaves its notes alone: the
 //   other models still work.
-// - A login that lapses within 3 days (every account that is not disabled)
-//   is told once per account and date. Unlike the windows it is not taken as
-//   seen at the start: an account already inside the 3 days at launch is told
-//   once per run, because that is the warning people need. An expired login
-//   only gets its badge.
+// - A login that lapses within 3 days (every account in rotation, and the
+//   active one, which is in use even when disabled) is told once per account
+//   and date. Unlike the windows it is not taken as seen at the start: an
+//   account already inside the 3 days at launch is told once per run, because
+//   that is the warning people need. An expired login only gets its badge.
 // - Nothing is read from a doubtful list (phase 'ok' with an error: the last
 //   refresh failed), from last-good data (stale), or from a window whose
 //   reset time has passed (its value no longer applies). They neither fire
 //   nor re-arm anything.
 // - With notifications off the rules keep running silently, so turning them
-//   back on never replays old crossings.
+//   back on never replays old crossings. A lapsing login is no crossing but a
+//   fact that still stands, so it waits and is told once they are back on.
 
 const { Notification } = require('electron');
 const I18n = require('../shared/i18n');
@@ -210,10 +211,12 @@ class Notifier {
     return 'warn';
   }
 
-  // Logins that lapse soon, on every account that is not disabled.
+  // Logins that lapse soon, on every account in use or in rotation. Not while
+  // notifications are off: marked as told, it would never be.
   logins(accounts, now, notes) {
+    if (!this.enabled) return;
     for (const row of accounts) {
-      const login = row.disabled ? null : loginNotice(row, now);
+      const login = row.disabled && !row.active ? null : loginNotice(row, now);
       if (!login || login.expired) continue;
       const told = `${identity(row)}\n${login.at}`;
       if (this.toldLogins.has(told)) continue;
@@ -376,6 +379,8 @@ function attach(ctx) {
 }
 
 function post(ctx, { title, body }) {
+  // A capture runs on fake accounts: none of that belongs on the person's screen.
+  if (ctx.dev && ctx.dev.capture) return;
   if (!Notification || !Notification.isSupported()) return;
   const n = new Notification({ title, body, silent: false });
   const forget = () => live.delete(n);

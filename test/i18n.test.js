@@ -266,6 +266,7 @@ test('the keys for those accounts, in every language, with their placeholders', 
     'notify.loginSoon': ['{name}', '{time}'],
     'notify.loginSoonBody': ['{n}'],
     'stats.nearLimitTipAny': ['{pct}'],
+    'stats.inUseTipLow': [],
   };
   for (const [key, vars] of Object.entries(want)) {
     for (const lang of LANGS) assert.deepEqual(placeholders(STRINGS[lang][key]), vars, `${lang} ${key}`);
@@ -283,26 +284,31 @@ test('the keys for those accounts, in every language, with their placeholders', 
     assert.equal(STRINGS[lang]['notify.loginSoonBody'], STRINGS[lang]['badge.tip.login'], lang);
     assert.match(STRINGS[lang]['badge.tip.login'], /cswap add --slot \{n\}$/, lang);
   }
-  // Never a plan as a fact: the tip says what Anthropic reports and how verified plans behave.
+  // Never a plan as a fact: the tip says what Anthropic reports and how verified accounts behave.
   for (const lang of LANGS) {
     assert.doesNotMatch(STRINGS[lang]['hero.noSession'], /Ultra/, lang);
     assert.doesNotMatch(STRINGS[lang]['trayTip.noSession'], /Ultra/, lang);
     assert.match(STRINGS[lang]['hero.noSessionTip'], /^Anthropic .*Ultra/, lang);
+    // It is the account that is verified, and a limit is a limit, as in its siblings (окно is the app's window).
+    assert.doesNotMatch(STRINGS[lang]['hero.noSessionTip'], /plans|тариф|Tarif|окн|вікн|Fenster/, lang);
   }
+  // The lower bound repeats the plain tip and says why.
+  for (const lang of LANGS) assert.ok(STRINGS[lang]['stats.inUseTipLow'].startsWith(`${STRINGS[lang]['stats.inUseTip']}. `), lang);
 });
 
 test('those texts as the spec has them', () => {
   const texts = (key) => LANGS.map((lang) => STRINGS[lang][key]);
   assert.deepEqual(texts('hero.noSession'), ['No 5-hour limit', 'Без 5-часового лимита', 'Без 5-годинного ліміту', 'Kein 5-Stunden-Limit']);
   assert.deepEqual(texts('trayTip.noSession'), ['no 5-hour limit', 'без 5-часового лимита', 'без 5-годинного ліміту', 'kein 5-Stunden-Limit']);
-  assert.deepEqual(texts('badge.loginSoon'), ['Login expires in {time}', 'Вход истекает через {time}', 'Вхід спливає через {time}', 'Anmeldung läuft in {time} ab']);
-  assert.deepEqual(texts('badge.loginExpired'), ['Login expired', 'Вход истёк', 'Вхід сплив', 'Anmeldung abgelaufen']);
+  assert.deepEqual(texts('badge.loginSoon'), ['Login expires in {time}', 'Срок действия входа истекает через {time}', 'Термін дії входу спливає через {time}', 'Anmeldung läuft in {time} ab']);
+  assert.deepEqual(texts('badge.loginExpired'), ['Login expired', 'Срок действия входа истёк', 'Термін дії входу сплив', 'Anmeldung abgelaufen']);
   for (const key of ['trayTip.loginSoon', 'menuLine.loginSoon']) {
-    assert.deepEqual(texts(key), ['login expires in {time}', 'вход истекает через {time}', 'вхід спливає через {time}', 'Anmeldung läuft in {time} ab'], key);
+    assert.deepEqual(texts(key), ['login expires in {time}', 'срок действия входа истекает через {time}', 'термін дії входу спливає через {time}', 'Anmeldung läuft in {time} ab'], key);
   }
   for (const key of ['trayTip.loginExpired', 'menuLine.loginExpired']) {
-    assert.deepEqual(texts(key), ['login expired', 'вход истёк', 'вхід сплив', 'Anmeldung abgelaufen'], key);
+    assert.deepEqual(texts(key), ['login expired', 'срок действия входа истёк', 'термін дії входу сплив', 'Anmeldung abgelaufen'], key);
   }
   assert.deepEqual(texts('notify.modelReached'), ['{name}: {model} limit reached', '{name}: лимит {model} исчерпан', '{name}: ліміт {model} вичерпано', '{name}: {model}-Limit erreicht']);
-  assert.deepEqual(texts('notify.loginSoon'), ['{name}: login expires in {time}', '{name}: вход истекает через {time}', '{name}: вхід спливає через {time}', '{name}: Anmeldung läuft in {time} ab']);
+  // A notification's title is one line and an email is long: in the longer languages the time comes first.
+  assert.deepEqual(texts('notify.loginSoon'), ['{name}: login expires in {time}', '{name}: через {time} истекает срок действия входа', '{name}: через {time} спливає термін дії входу', '{name}: Anmeldung läuft in {time} ab']);
 });
