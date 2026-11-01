@@ -29,7 +29,7 @@ It is **not** a fork of it.
   layer (claude.ai login, `sessionKey` cookie, hidden-window fetch) is exactly what this app
   must not do; data still comes from cswap. Amber at 75 %, red at 90 %.
 
-## cswap JSON contract (checked against claude-swap 0.27.0b1 and 0.26.0)
+## cswap JSON contract (checked against claude-swap 0.26.0 to 0.29.0)
 
 - `cswap list --json` → `{schemaVersion:1, activeAccountNumber, accounts:[row…]}`. An empty install
   (no `cswap add` yet) answers `{activeAccountNumber: null, accounts: []}` with exit 0.
@@ -49,7 +49,9 @@ It is **not** a fork of it.
 - Row fields: `number, email, alias?, organizationName, organizationUuid, isOrganization,
   active, disabled?, usageStatus, usage, usageFetchedAt?, usageAgeSeconds?, lastGoodUsage?,
   lastGoodFetchedAt?, lastGoodAgeSeconds?, usageError?, usageRetryAt?, loginExpiresAt?`
-  (the last three only from 0.27).
+  (the last three only from 0.27). `loginExpiresAt` (ISO 8601 UTC, absent when unknown) is when the
+  stored login's refresh token expires: only a fresh `/login` plus `cswap add --slot N` replaces it,
+  and after it the slot is `relogin_required`. The widget warns 3 days ahead (red under 24 h).
 - `usageStatus`: `ok`, `unavailable`, `token_expired` (refresh deferred, retried by itself),
   `relogin_required` (only the user can fix it), `keychain_unavailable`, `foreign_credential`
   (a switch repairs it), `no_credentials`, `api_key` (no subscription quota). Unknown values
@@ -61,7 +63,12 @@ It is **not** a fork of it.
 - Personal accounts have `organizationName` = `"<email>'s Organization"`; the UI hides it.
 - `usage`: `fiveHour {pct, resetsAt}`, `sevenDay {pct, resetsAt, expectedPct?, aheadOfPace?,
   projectedExhaustionAt?, willLastToReset?}`, `spend {used, limit, pct, currency, resetsAt?}`,
-  `scoped [{name, pct, resetsAt, …}]`. Every sub-key is optional.
+  `scoped [{name, pct, resetsAt, …}]`. Every sub-key is optional, and windows really are absent:
+  verified Ultra accounts (Max 20x renamed, from 2026-10-30) have no `fiveHour` key at all; Team and
+  Enterprise seats have `fiveHour` and `scoped` but no `sevenDay` (claude-swap #476). An idle 5-hour
+  window is `fiveHour: {pct: 0}` without `resetsAt`: "Not started", not "no limit". cswap does not
+  expose the plan (#499, #169), so the UI never says an account IS on Ultra, only that it has no
+  5-hour limit, and only from fresh data (`Usage.noSessionLimit`).
 - When `usage` is null, fall back to `lastGoodUsage` and show it as stale, with its age.
 - The contract is additive: ignore unknown fields and events.
 - `cswap auto --json` streams one JSON event per line (`poll`, `switch`, `no-switch`,
@@ -115,6 +122,10 @@ It is **not** a fork of it.
   `ELECTRON_RUN_AS_NODE=1` on and the packaged app quit silently. Check with
   `npx @electron/fuses read --app "dist/mac-arm64/Claude Swap Widget.app"`.
 - `build.extraResources` ships Electron's LICENSE and LICENSES.chromium.html in Contents/Resources.
+- Releasing: bump `version` (package.json + lock), `npm test`, `npm run e2e`, `npm run dist`, check the app in
+  `dist/mac-arm64` with `CSW_CAPTURE` and `npx @electron/fuses read`, merge to main, tag `vX.Y.Z` on main,
+  `gh release create vX.Y.Z "dist/Claude Swap Widget-X.Y.Z-arm64.dmg"`. The README's Download badge points at
+  `releases/latest`, so the newest tag must not be a prerelease.
 - Users must bypass Gatekeeper once (System Settings → Privacy & Security → Open Anyway, or
   `xattr -dr com.apple.quarantine`); the README explains it.
 
@@ -132,7 +143,11 @@ It is **not** a fork of it.
   `src/history.js`: usage history as JSONL per UTC day in `userData/history/` (32 days).
 - Shared UMD modules (main `require`s them, the renderer loads them with `<script>`):
   `src/shared/usage.js` (`window.Usage`), `i18n.js` (`window.I18n`, en/ru/uk/de),
-  `stats.js` (`window.Stats`). `src/tray-model.js` (pure) decides the menu-bar picture;
+  `stats.js` (`window.Stats`). `Usage.mainWindows(usage)` is the one place that decides which windows
+  get a ring and a row line (at most two: 5h + 7d, model + 7d, 5h + model, or one alone; the rest stay
+  under "more limits"); `Usage.loginNotice` is the one rule for the login warning (pill, menu line,
+  tooltip, notification). `src/tray-model.js` (pure) decides the menu-bar picture (`solo`: no 5h, only
+  the week, coloured by the worst of the week and the models);
   `src/renderer/tray-picture.js` paints the Maestro styles on a canvas and sends a PNG back
   (`tray:image` is positional: `(seq, dataUrl, template)`); `src/tray-icon.js` is the
   `classic` style and the fallback when the renderer cannot paint.
@@ -142,10 +157,12 @@ It is **not** a fork of it.
   `attribution.test.js`). `npm run e2e [flow…]` drives the real app on the fake cswap
   (`test/e2e/*.flow.js`, markup knowledge only in `test/e2e/ui.js`); it refuses to spawn any
   cswap other than the fake. `CSWAP_PATH="$PWD/test/fixtures/fake-cswap" npm start` runs the UI on
-  the fake (`FAKE_CSWAP_SCENARIO=default|empty|root|garbage|slow|schema2|old|flood|crash|stubborn|rolled|drift|nofetchedat|single|noactive`).
+  the fake (`FAKE_CSWAP_SCENARIO=default|ultra|empty|root|garbage|slow|schema2|old|flood|crash|stubborn|rolled|drift|nofetchedat|single|noactive`;
+  `ultra` is every shape at once: no 5h with Fable, 5h + 7d + Fable, week only, stale, a Team seat, expiring logins).
   Dev switches (ignored when packaged where noted): `CSW_THEME`, `CSW_LANG`, `CSW_CAPTURE=out.png`
   (screenshot + `out-tray.png`, then quit), `CSW_USER_DATA=<dir>` (packaged: ignored),
-  `CSW_VIEW`, `CSW_WINDOW`. Always give captures and e2e a temp `CSW_USER_DATA`.
+  `CSW_VIEW=stats|stats-bars|stats-summary` (`statsPeriod`/`statsStyle` in settings.json work too),
+  `CSW_WINDOW`. Always give captures and e2e a temp `CSW_USER_DATA`.
 - README pictures (`docs/*.jpg`) are collages of `CSW_CAPTURE` shots on the fake cswap
   (example.com accounts only). macOS ignores `--force-device-scale-factor`: for 2x shots on a
   1x display, run the app in a double-size window with zoom factor 2. `scripts/fake-history.js`
@@ -166,6 +183,8 @@ It is **not** a fork of it.
   Anthropic mark).
 - Every file with ported Maestro code carries the attribution header (LICENSE "Third-party
   code"); `test/attribution.test.js` checks the list.
+- The `--lift*` tokens stay `color-mix(…)`, not `rgba()`: `land-glow` animates between them and
+  `--glow`, and Chromium turns a filter animation from rgba() to color-mix() into a green flash.
 - Nothing animates forever: the desktop widget is on screen all day. Only spinners loop (and
   the bar sweep while cswap works); the threshold glow breathes 3 times, then rests. Never put a
   transition on something the 1 s clock rewrites (the time arc did: 22–33 % of a CPU core

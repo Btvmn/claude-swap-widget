@@ -51,8 +51,10 @@
   --arc-session: #0e0e10;
   --arc-week-a: #7d7bf0;
   --arc-week: #4d4bc6;
-  --lift: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.22));
-  --lift-weekly: drop-shadow(0 1px 3.5px rgba(88, 86, 214, 0.42));
+  /* color-mix, not rgba(): the landing glow animates between these and --glow, and
+     Chromium turns a filter animation from rgba() to color-mix() into a green flash. */
+  --lift: drop-shadow(0 1px 2px color-mix(in srgb, #000 22%, transparent));
+  --lift-weekly: drop-shadow(0 1px 3.5px color-mix(in srgb, #5856d6 42%, transparent));
   --glow-mix: 38%; /* share of the arc colour in a gauge's --glow (72 % on dark) */
   --shimmer: rgba(0, 0, 0, 0.09);
 
@@ -135,8 +137,8 @@
     --arc-session: #c9d3ff;
     --arc-week-a: #bccaff;
     --arc-week: #8195ff;
-    --lift: drop-shadow(0 0 4px rgba(255, 255, 255, 0.16));
-    --lift-weekly: drop-shadow(0 0 5px rgba(159, 180, 255, 0.4));
+    --lift: drop-shadow(0 0 4px color-mix(in srgb, #fff 16%, transparent));
+    --lift-weekly: drop-shadow(0 0 5px color-mix(in srgb, #9fb4ff 40%, transparent));
     --glow-mix: 72%;
     --shimmer: rgba(255, 255, 255, 0.3);
 

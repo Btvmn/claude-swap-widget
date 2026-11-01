@@ -60,6 +60,8 @@
       'hero.noActive': 'No active account',
       'hero.noActiveHint': 'Switch to one below',
       'hero.more': 'More limits',
+      'hero.noSession': 'No 5-hour limit',
+      'hero.noSessionTip': 'Anthropic reports no 5-hour window for this account (verified Ultra plans have none)',
       'model.week': '{name} · week',
       'extra.label': 'Extra usage',
       'spend.monthly': 'Monthly spend',
@@ -144,6 +146,9 @@
       'badge.pace': '7d ahead of pace',
       'badge.tip.pace': 'Used {pct}% — faster than an even pace to the weekly reset',
       'badge.tip.paceExpected': 'Used {pct}%; an even pace would be {expected}% by now',
+      'badge.loginSoon': 'Login expires in {time}',
+      'badge.loginExpired': 'Login expired',
+      'badge.tip.login': 'Log in to this account again in Claude Code, then run: cswap add --slot {n}',
 
       // Toasts and switch results (cswap `reason`)
       'toast.switchedTo': 'Switched to {name}',
@@ -204,6 +209,10 @@
       'trayTip.old': '{age} old',
       'trayTip.session': 'Session: {pct}%',
       'trayTip.week': 'Week: {pct}%',
+      'trayTip.model': '{name}: {pct}%',
+      'trayTip.noSession': 'no 5-hour limit',
+      'trayTip.loginSoon': 'login expires in {time}',
+      'trayTip.loginExpired': 'login expired',
       'menuLine.reset': '{window} reset',
       'menuLine.ahead': '(ahead)',
       'menuLine.disabled': 'disabled',
@@ -215,6 +224,8 @@
       'menuLine.no_credentials': 'no credentials',
       'menuLine.api_key': 'API key',
       'menuLine.unavailable': 'usage unavailable',
+      'menuLine.loginSoon': 'login expires in {time}',
+      'menuLine.loginExpired': 'login expired',
 
       // Tray menu
       'menu.next': 'Switch to Next',
@@ -316,6 +327,11 @@
       'notify.roomElsewhere': 'More headroom on {other} ({p}% used)',
       'notify.allExhausted': 'All accounts are at their limit',
       'notify.allExhaustedBody': 'Earliest reset: {name}, {when}',
+      'notify.modelWarn': '{name}: {model} at {p}% this week — running low',
+      'notify.modelDanger': '{name}: {model} at {p}% this week — almost out',
+      'notify.modelReached': '{name}: {model} limit reached',
+      'notify.loginSoon': '{name}: login expires in {time}',
+      'notify.loginSoonBody': 'Log in to this account again in Claude Code, then run: cswap add --slot {n}',
 
       // Statistics
       'chart.session': 'Session',
@@ -333,6 +349,7 @@
       'stats.average': 'Average',
       'stats.nearLimit': 'Near limit',
       'stats.nearLimitTip': 'Time with the session limit at {pct}% or more',
+      'stats.nearLimitTipAny': 'Time with the limit at {pct}% or more',
       'stats.spend': 'Spend',
       'stats.inUse': 'In use',
       'stats.inUseTip': 'Time with usage rising on this account, from any machine',
@@ -383,6 +400,8 @@
       'hero.noActive': 'Нет активного аккаунта',
       'hero.noActiveHint': 'Переключитесь на один из аккаунтов ниже',
       'hero.more': 'Другие лимиты',
+      'hero.noSession': 'Без 5-часового лимита',
+      'hero.noSessionTip': 'Anthropic не сообщает о 5-часовом окне для этого аккаунта (у верифицированных тарифов Ultra его нет)',
       'model.week': '{name} · неделя',
       'extra.label': 'Сверх лимита',
       'spend.monthly': 'Расходы за месяц',
@@ -467,6 +486,9 @@
       'badge.pace': 'Неделя: опережает график',
       'badge.tip.pace': 'Израсходовано {pct}% — быстрее, чем при равномерном расходе до конца недели',
       'badge.tip.paceExpected': 'Израсходовано {pct}%, а при равномерном расходе было бы {expected}%',
+      'badge.loginSoon': 'Вход истекает через {time}',
+      'badge.loginExpired': 'Вход истёк',
+      'badge.tip.login': 'Войдите в этот аккаунт заново в Claude Code, затем выполните: cswap add --slot {n}',
 
       // Toasts and switch results (cswap `reason`)
       'toast.switchedTo': 'Переключено на {name}',
@@ -527,6 +549,10 @@
       'trayTip.old': 'замер {age} назад',
       'trayTip.session': 'Сессия: {pct}%',
       'trayTip.week': 'Неделя: {pct}%',
+      'trayTip.model': '{name}: {pct}%',
+      'trayTip.noSession': 'без 5-часового лимита',
+      'trayTip.loginSoon': 'вход истекает через {time}',
+      'trayTip.loginExpired': 'вход истёк',
       'menuLine.reset': '{window}: обновлён',
       'menuLine.ahead': '(опережает)',
       'menuLine.disabled': 'отключён',
@@ -538,6 +564,8 @@
       'menuLine.no_credentials': 'нет данных входа',
       'menuLine.api_key': 'API-ключ',
       'menuLine.unavailable': 'нет данных о лимитах',
+      'menuLine.loginSoon': 'вход истекает через {time}',
+      'menuLine.loginExpired': 'вход истёк',
 
       // Tray menu
       'menu.next': 'Следующий аккаунт',
@@ -639,6 +667,11 @@
       'notify.roomElsewhere': 'Больше запаса у {other} (израсходовано {p}%)',
       'notify.allExhausted': 'У всех аккаунтов лимит исчерпан',
       'notify.allExhaustedBody': 'Раньше всех освободится {name}: {when}',
+      'notify.modelWarn': '{name}: {model} {p}% за неделю — лимит подходит к концу',
+      'notify.modelDanger': '{name}: {model} {p}% за неделю — лимит почти исчерпан',
+      'notify.modelReached': '{name}: лимит {model} исчерпан',
+      'notify.loginSoon': '{name}: вход истекает через {time}',
+      'notify.loginSoonBody': 'Войдите в этот аккаунт заново в Claude Code, затем выполните: cswap add --slot {n}',
 
       // Statistics
       'chart.session': 'Сессия',
@@ -656,6 +689,7 @@
       'stats.average': 'Среднее',
       'stats.nearLimit': 'У лимита',
       'stats.nearLimitTip': 'Время, когда лимит сессии был израсходован на {pct}% и больше',
+      'stats.nearLimitTipAny': 'Время, когда лимит был израсходован на {pct}% и больше',
       'stats.spend': 'Расходы',
       'stats.inUse': 'В работе',
       'stats.inUseTip': 'Время, когда расход на этом аккаунте рос (с любого компьютера)',
@@ -706,6 +740,8 @@
       'hero.noActive': 'Немає активного акаунта',
       'hero.noActiveHint': 'Перемкніться на один з акаунтів нижче',
       'hero.more': 'Інші ліміти',
+      'hero.noSession': 'Без 5-годинного ліміту',
+      'hero.noSessionTip': 'Anthropic не повідомляє про 5-годинне вікно для цього акаунта (у верифікованих тарифів Ultra його немає)',
       'model.week': '{name} · тиждень',
       'extra.label': 'Понад ліміт',
       'spend.monthly': 'Витрати за місяць',
@@ -790,6 +826,9 @@
       'badge.pace': 'Тиждень: випереджає графік',
       'badge.tip.pace': 'Використано {pct}% — швидше, ніж за рівномірних витрат до кінця тижня',
       'badge.tip.paceExpected': 'Використано {pct}%, а за рівномірних витрат було б {expected}%',
+      'badge.loginSoon': 'Вхід спливає через {time}',
+      'badge.loginExpired': 'Вхід сплив',
+      'badge.tip.login': 'Увійдіть у цей акаунт знову в Claude Code, потім виконайте: cswap add --slot {n}',
 
       // Toasts and switch results (cswap `reason`)
       'toast.switchedTo': 'Перемкнуто на {name}',
@@ -850,6 +889,10 @@
       'trayTip.old': 'вимір {age} тому',
       'trayTip.session': 'Сесія: {pct}%',
       'trayTip.week': 'Тиждень: {pct}%',
+      'trayTip.model': '{name}: {pct}%',
+      'trayTip.noSession': 'без 5-годинного ліміту',
+      'trayTip.loginSoon': 'вхід спливає через {time}',
+      'trayTip.loginExpired': 'вхід сплив',
       'menuLine.reset': '{window}: оновлено',
       'menuLine.ahead': '(випереджає)',
       'menuLine.disabled': 'вимкнений',
@@ -861,6 +904,8 @@
       'menuLine.no_credentials': 'немає даних входу',
       'menuLine.api_key': 'API-ключ',
       'menuLine.unavailable': 'немає даних про ліміти',
+      'menuLine.loginSoon': 'вхід спливає через {time}',
+      'menuLine.loginExpired': 'вхід сплив',
 
       // Tray menu
       'menu.next': 'Наступний акаунт',
@@ -962,6 +1007,11 @@
       'notify.roomElsewhere': 'Більше запасу в {other} (використано {p}%)',
       'notify.allExhausted': 'В усіх акаунтів ліміт вичерпано',
       'notify.allExhaustedBody': 'Найраніше звільниться {name}: {when}',
+      'notify.modelWarn': '{name}: {model} {p}% за тиждень — ліміт закінчується',
+      'notify.modelDanger': '{name}: {model} {p}% за тиждень — ліміт майже вичерпано',
+      'notify.modelReached': '{name}: ліміт {model} вичерпано',
+      'notify.loginSoon': '{name}: вхід спливає через {time}',
+      'notify.loginSoonBody': 'Увійдіть у цей акаунт знову в Claude Code, потім виконайте: cswap add --slot {n}',
 
       // Statistics
       'chart.session': 'Сесія',
@@ -979,6 +1029,7 @@
       'stats.average': 'Середнє',
       'stats.nearLimit': 'Біля ліміту',
       'stats.nearLimitTip': 'Час, коли ліміт сесії було використано на {pct}% і більше',
+      'stats.nearLimitTipAny': 'Час, коли ліміт було використано на {pct}% і більше',
       'stats.spend': 'Витрати',
       'stats.inUse': 'У роботі',
       'stats.inUseTip': 'Час, коли витрати на цьому акаунті зростали (з будь-якого компʼютера)',
@@ -1029,6 +1080,8 @@
       'hero.noActive': 'Kein aktives Konto',
       'hero.noActiveHint': 'Wechsle unten zu einem Konto',
       'hero.more': 'Weitere Limits',
+      'hero.noSession': 'Kein 5-Stunden-Limit',
+      'hero.noSessionTip': 'Anthropic meldet für dieses Konto kein 5-Stunden-Fenster (verifizierte Ultra-Tarife haben keines)',
       'model.week': '{name} · Woche',
       'extra.label': 'Zusatznutzung',
       'spend.monthly': 'Ausgaben im Monat',
@@ -1113,6 +1166,9 @@
       'badge.pace': 'Woche: über Plan',
       'badge.tip.pace': '{pct} % verbraucht – schneller als bei gleichmäßiger Nutzung bis zum Wochen-Reset',
       'badge.tip.paceExpected': '{pct} % verbraucht; bei gleichmäßiger Nutzung wären es jetzt {expected} %',
+      'badge.loginSoon': 'Anmeldung läuft in {time} ab',
+      'badge.loginExpired': 'Anmeldung abgelaufen',
+      'badge.tip.login': 'Melde dich in Claude Code neu bei diesem Konto an und führe dann aus: cswap add --slot {n}',
 
       // Toasts and switch results (cswap `reason`)
       'toast.switchedTo': 'Gewechselt zu {name}',
@@ -1173,6 +1229,10 @@
       'trayTip.old': 'vor {age} gemessen',
       'trayTip.session': 'Sitzung: {pct} %',
       'trayTip.week': 'Woche: {pct} %',
+      'trayTip.model': '{name}: {pct} %',
+      'trayTip.noSession': 'kein 5-Stunden-Limit',
+      'trayTip.loginSoon': 'Anmeldung läuft in {time} ab',
+      'trayTip.loginExpired': 'Anmeldung abgelaufen',
       'menuLine.reset': '{window}: zurückgesetzt',
       'menuLine.ahead': '(über Plan)',
       'menuLine.disabled': 'deaktiviert',
@@ -1184,6 +1244,8 @@
       'menuLine.no_credentials': 'keine Anmeldedaten',
       'menuLine.api_key': 'API-Schlüssel',
       'menuLine.unavailable': 'keine Nutzungsdaten',
+      'menuLine.loginSoon': 'Anmeldung läuft in {time} ab',
+      'menuLine.loginExpired': 'Anmeldung abgelaufen',
 
       // Tray menu
       'menu.next': 'Zum nächsten Konto',
@@ -1285,6 +1347,11 @@
       'notify.roomElsewhere': 'Mehr Spielraum bei {other} ({p} % verbraucht)',
       'notify.allExhausted': 'Alle Konten sind am Limit',
       'notify.allExhaustedBody': 'Als Erstes wieder frei: {name}, {when}',
+      'notify.modelWarn': '{name}: {model} bei {p} % diese Woche – wird knapp',
+      'notify.modelDanger': '{name}: {model} bei {p} % diese Woche – fast aufgebraucht',
+      'notify.modelReached': '{name}: {model}-Limit erreicht',
+      'notify.loginSoon': '{name}: Anmeldung läuft in {time} ab',
+      'notify.loginSoonBody': 'Melde dich in Claude Code neu bei diesem Konto an und führe dann aus: cswap add --slot {n}',
 
       // Statistics
       'chart.session': 'Sitzung',
@@ -1302,6 +1369,7 @@
       'stats.average': 'Durchschnitt',
       'stats.nearLimit': 'Am Limit',
       'stats.nearLimitTip': 'Zeit, in der das Sitzungslimit bei {pct} % oder mehr lag',
+      'stats.nearLimitTipAny': 'Zeit, in der das Limit bei {pct} % oder mehr lag',
       'stats.spend': 'Ausgaben',
       'stats.inUse': 'In Nutzung',
       'stats.inUseTip': 'Zeit, in der die Nutzung dieses Kontos stieg (von jedem Rechner aus)',

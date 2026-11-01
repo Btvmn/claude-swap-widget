@@ -7,8 +7,9 @@
 
 // Every account but the active one, as a row with their compact bars
 // (window.AccountList): name, status pills, Switch and ⋯, then one line per
-// window (5h, 7d): a thin bar, its percentage and the time to its reset, so
-// every account shows in how many days its week starts over.
+// window that has a ring when active (Usage.mainWindows, so the week comes
+// last): a thin bar, its percentage and the time to its reset, so every
+// account shows in how many days its week starts over.
 //
 //   AccountList.render(listEl, rows, ctx)
 //   AccountList.tick(now)      reset countdowns, every 30 s
@@ -46,20 +47,20 @@
       r.email,
       Usage.label(r, t),
       stale,
-      windowSig(u.fiveHour),
-      windowSig(u.sevenDay),
+      Usage.mainWindows(usage).shown.map((s) => [s.kind, s.name || null, windowSig(s.win)]),
       (Array.isArray(u.scoped) ? u.scoped : []).map((w) => [w && w.name, w && Math.round(w.pct)]),
       Usage.badges(r, t).map((b) => `${b.key}:${b.tone}`),
     ];
   }
 
   // Pills: the badges minus Active (the hero is the active one), plus one per
-  // model window that has reached the warn line.
+  // model window without a line of its own that has reached the warn line.
   function pills(row) {
     const { usage } = Usage.effectiveUsage(row);
     const out = Usage.badges(row, t).filter((b) => b.key !== 'active');
+    const { rest } = Usage.mainWindows(usage);
     for (const w of usage && Array.isArray(usage.scoped) ? usage.scoped : []) {
-      if (w && typeof w.pct === 'number' && Usage.level(w.pct) !== 'ok') {
+      if (rest.includes(w) && Usage.level(w.pct) !== 'ok') {
         out.push({ key: `model:${w.name}`, label: t('win.pct', { window: w.name || '?', pct: Math.round(w.pct) }), tone: Usage.level(w.pct) === 'crit' ? 'crit' : 'warn', title: t('model.week', { name: w.name || '?' }) });
       }
     }
@@ -73,21 +74,23 @@
 
   // A window that rolled over since cswap measured it is outdated, like
   // last-good data: no warning colour, dimmed (the hero and tray do the same).
-  // One grid line: label, bar, percentage, time to this window's reset.
-  function bar(win, kind, stale, key, now) {
-    const pct = win && typeof win.pct === 'number' ? Math.min(Math.max(win.pct, 0), 100) : null;
-    const old = stale || Boolean(win && Usage.resetPassed(win, now));
+  // One grid line: label, bar, percentage, time to this window's reset. The
+  // slot comes from mainWindows, so its window always has a number.
+  function bar(slot, stale, key, now) {
+    const { kind, win, name } = slot;
+    const pct = Math.min(Math.max(win.pct, 0), 100);
+    const old = stale || Usage.resetPassed(win, now);
     const cls = ['compact-bar-fill', kind === '7d' ? 'weekly' : '', pct > 0 ? 'has-value' : '', old ? 'is-old' : tone(pct)].filter(Boolean).join(' ');
-    const fill = h('div', { class: cls, 'data-fill': `${key}|${kind}`, 'data-pct': pct === null ? '' : String(pct), 'data-resets-at': (win && win.resetsAt) || '' });
+    const fillKey = kind === 'model' ? `${key}|model|${name}` : `${key}|${kind}`;
+    const fill = h('div', { class: cls, 'data-fill': fillKey, 'data-pct': String(pct), 'data-resets-at': win.resetsAt || '' });
     const lvl = Usage.level(pct);
-    const pctText = pct === null ? '—' : I18nDom.pct(pct);
     // At the limit the reset is what matters most: when this account is usable again.
     const resetCls = `acct-reset${!old && lvl === 'crit' ? ' matters' : ''}`;
     return [
-      h('span', { class: 'lbl' }, t(`win.${kind}`)),
+      kind === 'model' ? h('span', { class: 'lbl model', title: t('model.week', { name }) }, name) : h('span', { class: 'lbl' }, t(`win.${kind}`)),
       h('div', { class: 'compact-bar-bg' }, fill),
-      h('span', { class: `pct${old ? ' old' : lvl === 'crit' ? ' crit' : lvl === 'warn' ? ' warn' : ''}` }, pctText),
-      h('span', { class: resetCls, 'data-resets-at': (win && win.resetsAt) || '', title: resetTip(win, kind) }, resetText(win, now)),
+      h('span', { class: `pct${old ? ' old' : lvl === 'crit' ? ' crit' : lvl === 'warn' ? ' warn' : ''}` }, I18nDom.pct(pct)),
+      h('span', { class: resetCls, 'data-resets-at': win.resetsAt || '', title: resetTip(slot) }, resetText(win, now)),
     ];
   }
 
@@ -99,10 +102,11 @@
   }
 
   // "7-day usage: resets Sat, Oct 4, 6:59 PM"
-  function resetTip(win, kind) {
-    if (!win || !win.resetsAt) return null;
+  function resetTip({ kind, win, name }) {
+    if (!win.resetsAt) return null;
     const when = window.I18n.formatDay(I18nDom.locale(), win.resetsAt, 'date-day-time', I18nDom.hour12());
-    return when ? `${t(`ring.name.${kind}`)}: ${t('reset.on', { date: when })}` : null;
+    const what = kind === 'model' ? t('model.week', { name }) : t(`ring.name.${kind}`);
+    return when ? `${what}: ${t('reset.on', { date: when })}` : null;
   }
 
   function row(r, ctx, now) {
@@ -110,6 +114,7 @@
     const key = ctx.key(r);
     const name = Usage.label(r, t);
     const pillEls = pills(r);
+    const { shown } = Usage.mainWindows(usage);
     const classes = ['acct', r.disabled ? 'is-disabled' : '', stale ? 'is-stale' : ''].filter(Boolean).join(' ');
     return h(
       'article',
@@ -140,8 +145,8 @@
         ),
       ),
       pillEls.length ? h('div', { class: 'pills acct-pills' }, pillEls) : null,
-      usage
-        ? h('div', { class: 'acct-bars' }, bar(usage.fiveHour, '5h', stale, key, now), bar(usage.sevenDay, '7d', stale, key, now))
+      shown.length
+        ? h('div', { class: 'acct-bars' }, shown.map((s) => bar(s, stale, key, now)))
         : h('p', { class: 'acct-no-usage' }, t('card.noUsage')),
     );
   }
@@ -170,7 +175,7 @@
     const fills = [...el.querySelectorAll('[data-fill]')];
     for (const f of fills) f.style.width = before.get(f.dataset.fill) || '0%';
     requestAnimationFrame(() => {
-      for (const f of fills) f.style.width = `${f.dataset.pct === '' ? 0 : Number(f.dataset.pct)}%`;
+      for (const f of fills) f.style.width = `${f.dataset.pct}%`;
     });
 
     if (hadFocus) {

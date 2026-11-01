@@ -9,6 +9,10 @@
 // once and then patched in place, never rebuilt, so the 1.2 s arc ease and
 // the number count-up play on every refresh and switch.
 //
+// The rings show Usage.mainWindows(): usually 5h and 7d. An account with no
+// 5-hour window has its fullest model on the left and the week on the right;
+// one with a single window has one ring.
+//
 //   Hero.render(el, row | null, ctx)   the active account's cswap row
 //   Hero.tick(now)                     countdowns + time arcs, every second
 
@@ -34,13 +38,15 @@
 
   // ── build once ──────────────────────────────────────────────────
 
-  // Their gauge: track, threshold ticks (plus our pace tick on the week),
-  // the usage arc with a gradient from its start, a thin time arc inside.
-  function gauge(id, win) {
+  // Their gauge: track, threshold ticks (plus our pace tick), the usage arc
+  // with a gradient from its start, a thin time arc inside. `home` is the
+  // window the gauge is for when it has none, and all data-window says: left
+  // or right colour, whichever window the account's slot puts in it.
+  function gauge(id, home) {
     const gradId = `${id}ArcGradient`;
     const usage = svg('circle', {
       id: `${id}Progress`,
-      class: win === '7d' ? 'ring-usage weekly' : 'ring-usage',
+      class: home === '7d' ? 'ring-usage weekly' : 'ring-usage',
       cx: 48,
       cy: 48,
       r: R_USAGE,
@@ -59,7 +65,7 @@
     });
     const tickWarn = svg('circle', { class: 'ring-tick ring-tick-warn', r: 1.9 });
     const tickDanger = svg('circle', { class: 'ring-tick ring-tick-danger', r: 1.9 });
-    const tickPace = win === '7d' ? svg('circle', { class: 'ring-tick ring-tick-pace', r: 1.9 }) : null;
+    const tickPace = svg('circle', { class: 'ring-tick ring-tick-pace', r: 1.9, display: 'none' });
     placeTick(tickWarn, WARN);
     placeTick(tickDanger, CRIT);
     const ring = svg(
@@ -86,15 +92,17 @@
     const num = h('span', { id: `${id}Percentage`, class: 'gauge-num' }, '—');
     const countdown = h('div', { id: `${id}TimeText`, class: 'gauge-countdown timer-text' });
     const reset = h('div', { id: `${id}ResetsAt`, class: 'gauge-reset resets-at-text' });
-    const pace = win === '7d' ? h('div', { id: 'weeklyPace', class: 'gauge-pace', hidden: true }) : null;
+    const pace = h('div', { id: `${id}Pace`, class: 'gauge-pace', hidden: true });
     const metaPct = h('div', { class: 'gauge-meta-pct' });
+    // The text has its own element: a flex item is what ellipsizes in ring-in-ring.
+    const label = h('span', { class: 'gauge-label-text' });
     const el = h(
       'div',
-      { id: `${id}Gauge`, class: 'gauge', 'data-window': win },
+      { id: `${id}Gauge`, class: 'gauge', 'data-window': home },
       h('div', { class: 'gauge-ring' }, ring, h('div', { class: 'gauge-value' }, num)),
-      h('div', { class: 'gauge-meta' }, h('span', { class: 'gauge-label', 'data-i18n': win === '7d' ? 'gauge.weekly' : 'gauge.session' }, t(win === '7d' ? 'gauge.weekly' : 'gauge.session')), metaPct, countdown, reset, pace),
+      h('div', { class: 'gauge-meta' }, h('span', { class: 'gauge-label' }, label), metaPct, countdown, reset, pace),
     );
-    return { el, win, usage, time, num, metaPct, countdown, reset, pace, tickPace, window: null };
+    return { el, home, kind: home, win: home, slot: null, window: null, label, usage, time, num, metaPct, countdown, reset, pace, tickPace };
   }
 
   // Ticks sit on the usage track; the ring is turned −90° by CSS, so angle 0
@@ -117,6 +125,7 @@
     const weekly = gauge('weekly', '7d');
     const empty = h('div', { class: 'hero-empty', hidden: true }, h('p', { class: 'hero-empty-title' }), h('p', { class: 'hero-empty-hint' }));
     const noUsage = h('p', { class: 'hero-no-usage', hidden: true });
+    const note = h('p', { class: 'hero-note', hidden: true });
     const gauges = h('div', { class: 'gauges' }, session.el, weekly.el);
     const toggle = h(
       'button',
@@ -125,17 +134,19 @@
     );
     const extra = h('div', { id: 'extraRows' });
     const section = h('div', { id: 'expandSection', class: 'expand-section', hidden: true }, extra);
-    el.replaceChildren(h('div', { class: 'hero-status' }, status, menu), gauges, noUsage, toggle, section, empty);
-    return { status, menu, session, weekly, gauges, empty, noUsage, toggle, section, extra };
+    el.replaceChildren(h('div', { class: 'hero-status' }, status, menu), gauges, noUsage, note, toggle, section, empty);
+    return { status, menu, session, weekly, gauges, empty, noUsage, note, toggle, section, extra };
   }
 
   // ── more limits: per-model weekly windows and extra-usage spend ────
 
   // Rows under the rings, their expand section: label | bar | % | time or amount.
+  // Only the models without a ring, in cswap's order.
   function extraRows(usage, now) {
     const rows = [];
+    const { rest } = Usage.mainWindows(usage);
     for (const w of usage && Array.isArray(usage.scoped) ? usage.scoped : []) {
-      if (!w || typeof w.pct !== 'number') continue;
+      if (!rest.includes(w)) continue;
       const secs = w.resetsAt && !Usage.resetPassed(w, now) ? Usage.secondsUntil(w.resetsAt, now) : null;
       rows.push({
         key: `model|${w.name || '?'}`,
@@ -221,7 +232,7 @@
     };
     if (el._raf) cancelAnimationFrame(el._raf);
     el._raf = 0;
-    if (from === to || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (from === to || duration <= 0 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       paint(to);
       return;
     }
@@ -234,9 +245,41 @@
     el._raf = requestAnimationFrame(step);
   }
 
-  // One gauge from one cswap window ({pct, resetsAt, expectedPct?, aheadOfPace?}).
-  function paintGauge(g, win, stale, now) {
-    g.window = win || null;
+  // Two slots fill both gauges. One takes the gauge of its colour (the week
+  // stays on the right) and the other goes away. None leaves both empty.
+  function paintGauges(shown, stale, now) {
+    const one = shown.length === 1;
+    const [left, right] = !one ? shown : shown[0].kind === '7d' ? [null, shown[0]] : [shown[0], null];
+    parts.gauges.classList.toggle('one', one);
+    hideGauge(parts.session, one && !left);
+    hideGauge(parts.weekly, one && !right);
+    paintGauge(parts.session, left, stale, now);
+    paintGauge(parts.weekly, right, stale, now);
+  }
+
+  // A gauge going away in flight lands at once, so that the flight can end.
+  function hideGauge(g, hide) {
+    g.el.hidden = hide;
+    const r = hide ? flightFor(g) : null;
+    if (!r) return;
+    r.phase = 'done';
+    release(r, 0);
+    land(r);
+  }
+
+  // One gauge from one slot of mainWindows ({kind, win, name?}), or empty. The
+  // window is {pct, resetsAt, expectedPct?, aheadOfPace?}. A model's week reads
+  // like the week: time arc over 7 days, a date for its reset, days to go.
+  function paintGauge(g, slot, stale, now) {
+    const win = slot ? slot.win : null;
+    g.slot = slot || null;
+    g.window = win;
+    g.kind = slot ? slot.kind : g.home;
+    g.win = g.kind === 'model' ? '7d' : g.kind;
+    const label = g.kind === 'model' ? t('model.week', { name: slot.name }) : t(g.win === '5h' ? 'gauge.session' : 'gauge.weekly');
+    setText(g.label, label);
+    const tip = g.kind === 'model' ? label : '';
+    if (g.label.title !== tip) g.label.title = tip;
     const pct = win && typeof win.pct === 'number' ? Math.min(Math.max(win.pct, 0), 100) : null;
     const passed = Boolean(win && Usage.resetPassed(win, now));
     const shown = pct === null ? null : Math.round(pct);
@@ -269,17 +312,14 @@
       applyClasses(g, cls);
     }
 
-    if (g.pace) {
-      const expected = win && typeof win.expectedPct === 'number' ? win.expectedPct : null;
-      if (g.tickPace) {
-        // SVG elements have no `hidden`; the display attribute does it.
-        g.tickPace.setAttribute('display', expected === null ? 'none' : 'inline');
-        if (expected !== null) placeTick(g.tickPace, expected);
-      }
-      const ahead = Boolean(win && win.aheadOfPace === true && expected !== null && !passed);
-      g.pace.hidden = !ahead;
-      g.pace.textContent = ahead ? t('pace.ahead', { expected: Math.round(expected) }) : '';
-    }
+    // Weekly windows only: the week and the models.
+    const expected = g.win === '7d' && win && typeof win.expectedPct === 'number' ? win.expectedPct : null;
+    // SVG elements have no `hidden`; the display attribute does it.
+    g.tickPace.setAttribute('display', expected === null ? 'none' : 'inline');
+    if (expected !== null) placeTick(g.tickPace, expected);
+    const ahead = Boolean(win && win.aheadOfPace === true && expected !== null && !passed);
+    g.pace.hidden = !ahead;
+    g.pace.textContent = ahead ? t('pace.ahead', { expected: Math.round(expected) }) : '';
     paintTime(g, now);
   }
 
@@ -325,10 +365,14 @@
     return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   }
 
+  function visibleGauges() {
+    return [parts.session, parts.weekly].filter((g) => !g.el.hidden);
+  }
+
   function startRecharge() {
     if (flight || !parts || !current || parts.gauges.hidden || reduced() || document.visibilityState !== 'visible') return;
     const start = performance.now();
-    const rings = [parts.session, parts.weekly].map((g, i) => {
+    const rings = visibleGauges().map((g, i) => {
       // Start from what is on screen right now, even mid-transition.
       const onScreen = parseFloat(getComputedStyle(g.usage).strokeDashoffset);
       const from = Number.isFinite(onScreen) ? clamp01(1 - onScreen / C_USAGE) : 0;
@@ -563,12 +607,12 @@
     el.dataset.account = row ? ctx.key(row) : '';
     el.dataset.number = row ? String(row.number) : '';
     el.classList.toggle('is-disabled', Boolean(row && row.disabled));
-    I18nDom.apply(el);
 
     if (!row) {
       current = null;
       parts.gauges.hidden = true;
       parts.noUsage.hidden = true;
+      parts.note.hidden = true;
       parts.menu.hidden = true;
       parts.status.replaceChildren();
       parts.empty.hidden = false;
@@ -593,12 +637,16 @@
     parts.status.parentNode.classList.toggle('has-pills', pills.length > 0);
 
     const now = Date.now();
-    const hasUsage = Boolean(usage && (usage.fiveHour || usage.sevenDay));
+    const { shown } = Usage.mainWindows(usage);
+    const hasUsage = shown.length > 0;
     parts.gauges.hidden = false;
     parts.noUsage.hidden = hasUsage;
     parts.noUsage.textContent = hasUsage ? '' : t('card.noUsageHint');
-    paintGauge(parts.session, usage && usage.fiveHour, stale, now);
-    paintGauge(parts.weekly, usage && usage.sevenDay, stale, now);
+    const noSession = Usage.noSessionLimit(row);
+    parts.note.hidden = !noSession;
+    parts.note.textContent = noSession ? t('hero.noSession') : '';
+    parts.note.title = noSession ? t('hero.noSessionTip') : '';
+    paintGauges(shown, stale, now);
     const sig = JSON.stringify([extraRows(usage, now).map((r) => [r.key, r.pct === null ? null : Math.round(r.pct), r.spend || null, r.resetsAt || null]), expanded, I18nDom.lang(), I18nDom.locale(), I18nDom.hour12()]);
     if (sig !== extraSig) {
       extraSig = sig;
@@ -614,12 +662,12 @@
       const secs = Usage.resetPassed({ resetsAt: at }, now) ? null : Usage.secondsUntil(at, now);
       el.textContent = secs == null ? t('ring.now') : I18nDom.duration(secs);
     }
-    for (const g of [parts.session, parts.weekly]) {
+    for (const g of visibleGauges()) {
       const before = g.el.classList.contains('is-stale');
       paintTime(g, now);
       // A window that just rolled over looks outdated until the next refresh.
       const passed = Boolean(g.window && Usage.resetPassed(g.window, now));
-      if (passed && !before) paintGauge(g, g.window, current.stale, now);
+      if (passed && !before) paintGauge(g, g.slot, current.stale, now);
     }
   }
 

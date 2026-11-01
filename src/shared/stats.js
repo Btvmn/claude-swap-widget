@@ -11,6 +11,14 @@
 // Input samples are the history store's lines for one account:
 //   { t: <epoch seconds>, a?, h?: 5h pct, w?: 7d pct, r5?, m?: {name: pct}, u?: spend, l?: limit }
 // A missing value is missing, never 0: it neither drops nor rises.
+//
+// Peak, Average, Near limit and the busiest bucket read a reading's level: its
+// 5h, else the fullest of its weekly limits (the 7d and the model windows). An
+// account with no 5-hour window keeps its cards, bars and strip that way, and
+// they agree with the chart's lines; a reading with a 5h behaves as if the
+// others were not there. What must not show a stand-in reads `sessionPeak` (the
+// strict 5h peak); `peakWindow` names the limit a bucket's stand-in came from,
+// `allSession` says a period has none.
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
   else root.Stats = factory();
@@ -29,6 +37,29 @@
 
   function isNum(v) {
     return typeof v === 'number' && Number.isFinite(v);
+  }
+
+  // The model windows a reading has a number for: its own names, never
+  // `__proto__` (the files can be edited).
+  function modelNames(e) {
+    if (!e.m || typeof e.m !== 'object') return [];
+    return Object.keys(e.m).filter((name) => name !== '__proto__' && isNum(e.m[name]));
+  }
+
+  // A reading's level (see the top); null when no window in it has a number.
+  function level(e) {
+    if (isNum(e.h)) return e.h;
+    const values = modelNames(e).map((name) => e.m[name]);
+    if (isNum(e.w)) values.push(e.w);
+    return values.length ? Math.max(...values) : null;
+  }
+
+  // Where that level came from when it is not a 5h: '7d' (which wins a tie) or
+  // a model's name.
+  function levelWindow(e, lv) {
+    if (isNum(e.h)) return null;
+    if (isNum(e.w) && e.w === lv) return '7d';
+    return modelNames(e).find((name) => e.m[name] === lv) || null;
   }
 
   // Bucket edges in local time, from calendar arithmetic so DST days stay
@@ -111,8 +142,11 @@
       future: b.start > nowMs,
       current: b.start <= nowMs && nowMs < b.end,
       n: 0,
-      peak: null,
+      peak: null, // the highest level
+      sessionPeak: null, // the highest 5h, nothing else
+      peakWindow: null, // '7d' or a model's name when `peak` is not a 5h value
       weekLast: null, // where the week stood at the end of the bucket
+      modelLast: null, // { name: pct }: where each model stood at the end of the bucket
       avg: null,
       observedMs: 0,
       inUseMs: 0,
@@ -122,10 +156,13 @@
       none: false,
     }));
     // Accumulators for the averages, kept out of the returned buckets.
-    const acc = buckets.map(() => ({ tw: 0, twMs: 0, hSum: 0, hN: 0 }));
-    const total = { tw: 0, twMs: 0, hSum: 0, hN: 0 };
+    const acc = buckets.map(() => ({ tw: 0, twMs: 0, sum: 0, n: 0 }));
+    const total = { tw: 0, twMs: 0, sum: 0, n: 0 };
 
     let peak = null;
+    let hasSession = false;
+    let allSession = true; // no reading in the window stands in with a 7d or a model
+    const modelLatest = new Map(); // name → its last reading in the window
     let observedMs = 0;
     let inUseMs = 0;
     let nearMs = 0;
@@ -137,16 +174,16 @@
 
     // Credits [from, to) to every bucket it overlaps, walking back from the
     // later sample's bucket; the held value is the earlier reading's.
-    function spread(from, to, h, lastIndex) {
+    function spread(from, to, held, lastIndex) {
       for (let j = lastIndex; j >= 0; j--) {
         const b = buckets[j];
         const part = Math.min(to, b.end) - Math.max(from, b.start);
         if (part > 0) {
           b.observedMs += part;
-          if (isNum(h)) {
-            acc[j].tw += h * part;
+          if (held !== null) {
+            acc[j].tw += held * part;
             acc[j].twMs += part;
-            if (h >= danger) b.nearMs += part;
+            if (held >= danger) b.nearMs += part;
           }
         }
         if (b.start <= from) break;
@@ -158,15 +195,30 @@
       while (bi < buckets.length - 1 && s.ms >= buckets[bi].end) bi++;
       const b = buckets[bi];
       b.n++;
+      const lv = level(e);
+      if (lv !== null) {
+        // The peak is what the bar shows, so its name follows it; a tie is the 5h's.
+        if (b.peak === null || lv > b.peak || (lv === b.peak && isNum(e.h))) {
+          b.peak = lv;
+          b.peakWindow = levelWindow(e, lv);
+        }
+        peak = peak === null ? lv : Math.max(peak, lv);
+        acc[bi].sum += lv;
+        acc[bi].n++;
+        total.sum += lv;
+        total.n++;
+        if (!isNum(e.h)) allSession = false;
+      }
       if (isNum(e.h)) {
-        b.peak = b.peak === null ? e.h : Math.max(b.peak, e.h);
-        peak = peak === null ? e.h : Math.max(peak, e.h);
-        acc[bi].hSum += e.h;
-        acc[bi].hN++;
-        total.hSum += e.h;
-        total.hN++;
+        b.sessionPeak = b.sessionPeak === null ? e.h : Math.max(b.sessionPeak, e.h);
+        hasSession = true;
       }
       if (isNum(e.w)) b.weekLast = e.w;
+      for (const name of modelNames(e)) {
+        if (!b.modelLast) b.modelLast = {};
+        b.modelLast[name] = e.m[name];
+        modelLatest.set(name, e.m[name]);
+      }
       if (isNum(e.l)) limit = e.l;
 
       // Spend: every rise counts, even across a gap (it is still money); a
@@ -185,13 +237,13 @@
         const from = Math.max(prev.ms, win.start);
         const to = s.ms;
         if (s.ms - prev.ms <= gapMaxMs && to > from) {
-          const h = prev.e.h;
-          spread(from, to, h, bi);
+          const held = level(prev.e);
+          spread(from, to, held, bi);
           observedMs += to - from;
-          if (isNum(h)) {
-            total.tw += h * (to - from);
+          if (held !== null) {
+            total.tw += held * (to - from);
             total.twMs += to - from;
-            if (h >= danger) nearMs += to - from;
+            if (held >= danger) nearMs += to - from;
           }
           if (rose(prev.e, e)) {
             inUseMs += to - from;
@@ -206,7 +258,7 @@
       const a = acc[i];
       // A bucket whose readings have no observed time after them (a lone
       // sample) falls back to their plain mean.
-      b.avg = a.twMs > 0 ? a.tw / a.twMs : a.hN ? a.hSum / a.hN : null;
+      b.avg = a.twMs > 0 ? a.tw / a.twMs : a.n ? a.sum / a.n : null;
       b.none = b.n === 0 && b.observedMs === 0;
     });
 
@@ -218,6 +270,13 @@
       if (!busiest || b.peak > busiest.peak || (b.peak === busiest.peak && b.inUseMs >= busiest.inUseMs)) busiest = b;
     }
 
+    // The model that stands highest at its last reading; a tie keeps the one
+    // seen first.
+    let topModel = null;
+    for (const [name, pct] of modelLatest) {
+      if (topModel === null || pct > modelLatest.get(topModel)) topModel = name;
+    }
+
     const elapsedMs = Math.max(0, Math.min(nowMs, win.end) - win.start);
     return {
       period: PERIODS.includes(period) ? period : 'day',
@@ -226,7 +285,7 @@
       samples: inWin.map((s) => s.e),
       count: inWin.length,
       peak,
-      avg: total.twMs > 0 ? total.tw / total.twMs : total.hN ? total.hSum / total.hN : null,
+      avg: total.twMs > 0 ? total.tw / total.twMs : total.n ? total.sum / total.n : null,
       nearMs,
       inUseMs,
       observedMs,
@@ -234,6 +293,9 @@
       coverage: elapsedMs > 0 ? Math.min(1, observedMs / elapsedMs) : null,
       spend: hasSpend ? { amount: spendUp, last: lastU, limit, currency: opts.currency || null } : null,
       busiest,
+      hasSession,
+      allSession,
+      topModel,
       currentIndex: buckets.findIndex((b) => b.current),
     };
   }

@@ -63,6 +63,12 @@ function okState(row, extra = {}) {
 
 const FAILED = { kind: 'cli', message: 'refresh failed' };
 
+// cswap's shape for an account with no 5-hour window: no fiveHour key at all.
+const weekOnly = (seven, fable) => ({
+  sevenDay: { pct: seven, resetsAt: inH(30) },
+  ...(fable === undefined ? {} : { scoped: [{ name: 'Fable', pct: fable, resetsAt: inH(30) }] }),
+});
+
 // The first six are PLAN §10 P1.5; the rest cover the edges worth a look.
 const CASES = [
   { label: '20 · 34', state: okState(account(20, 34)) },
@@ -81,6 +87,18 @@ const CASES = [
   },
   { label: '100 · 100 failed', state: okState(account(100, 100), { error: FAILED }) },
   { label: 'no usage', state: okState(account(0, 0, { usage: null, usageStatus: 'unavailable' })) },
+  { label: 'no 5h 71 · Fable 82', state: okState(account(0, 0, { usage: weekOnly(71, 82) })) },
+  { label: 'no 5h 34', state: okState(account(0, 0, { usage: weekOnly(34) })) },
+  { label: 'no 5h 95 failed', state: okState(account(0, 0, { usage: weekOnly(95) }), { error: FAILED }) },
+  { label: 'no 5h busy', state: okState(account(0, 0, { usage: weekOnly(34) })), busy: true },
+  {
+    label: 'stale no 5h',
+    state: okState(account(0, 0, { usage: null, usageStatus: 'token_expired', lastGoodUsage: weekOnly(33, 12), lastGoodAgeSeconds: 216_000 })),
+  },
+  {
+    label: 'team 41 · Fable 0',
+    state: okState(account(0, 0, { usage: { fiveHour: { pct: 41, resetsAt: inH(2.2) }, scoped: [{ name: 'Fable', pct: 0, resetsAt: inH(90) }] } })),
+  },
 ];
 
 const STYLES = ['classic', 'ring', 'bars', 'rings', 'ringsText'];
@@ -346,7 +364,10 @@ function sheetPage() {
     const cellWidth = (ri, ci) => (images[ri][ci] ? images[ri][ci].naturalWidth * z : 0) + titleWidth(spec.rows[ri].cells[ci].title);
     const pad = 16 * z;
     const labelW = 150 * z;
-    const colW = spec.columns.map((_, ci) => Math.max(120 * z, ...spec.rows.map((_, ri) => cellWidth(ri, ci))) + 2 * pad);
+    ctx.font = labelFont;
+    const columnLabels = spec.columns.map((label) => ctx.measureText(label).width);
+    ctx.font = titleFont;
+    const colW = spec.columns.map((_, ci) => Math.max(120 * z, columnLabels[ci], ...spec.rows.map((_, ri) => cellWidth(ri, ci))) + 2 * pad);
     const headH = 92 * z;
     const stripH = 48 * z;
     const rowH = stripH + 34 * z;
@@ -438,6 +459,14 @@ function sheetPage() {
 }
 
 // ── Entry: plain Node relaunches under Electron (like scripts/start.js) ─────
+
+// Never from inside Electron. A copy of this file that requires the npm package
+// by its path gets the binary's path there too, and would relaunch itself
+// without end (it happened on 2026-11-01: hundreds of Electrons in the Dock).
+if (typeof electron === 'string' && process.versions.electron) {
+  console.error('tray-sheet: require("electron") gave a path under Electron; not relaunching');
+  process.exit(1);
+}
 
 if (typeof electron === 'string') {
   const { spawn } = require('child_process');

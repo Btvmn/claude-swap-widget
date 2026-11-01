@@ -14,7 +14,7 @@
 //   Hero.tick(now)                            1 s clock while visible
 //   AccountList.render(listEl, rows, ctx)     rows = every account but the active one
 //   AccountList.tick(now)                     30 s clock
-//   StatsView.open(el, ctx, {email?, organizationUuid?})
+//   StatsView.open(el, ctx, {email?, organizationUuid?, look?})
 //   StatsView.update(ctx)                     new state while open
 //   StatsView.close()
 //   Hero.recharge / AccountList.sweep(ctx)    motion hooks (P3.6), called on a
@@ -419,7 +419,8 @@
     applySettings(await ipc.getSettings());
     state = await ipc.getState();
     render();
-    if (info.captureView === 'stats') openStats();
+    // CSW_VIEW=stats, or stats-bars / stats-summary for a look of their own.
+    if (/^stats(-|$)/.test(info.captureView || '')) openStats({ look: info.captureView.split('-')[1] });
     else if (pendingOpen && state && state.phase === 'ok') openStats(pendingOpen);
   })();
 })();

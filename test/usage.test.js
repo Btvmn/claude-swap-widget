@@ -475,6 +475,349 @@ test('trayInfo tooltipLines: only windows with a reset still ahead, absent when 
   assert.equal(plain([info.tooltip, ...(info.tooltipLines || [])].join('\n')), 'a@b.c · 5h 42% · stale\nSession: 42% · resets at 3:59 PM');
 });
 
+// --- accounts without a 5-hour window, Team seats (claude-swap #476), login expiry
+
+const SOON = '2026-09-29T15:00:00.603140+00:00'; // 3 h after NOW
+const WEEK_END = '2026-10-01T18:00:00.603140+00:00'; // Oct 1, 54 h after NOW
+const PAST = '2026-09-29T11:00:00.603140+00:00';
+const win = (pct, resetsAt = WEEK_END, extra = {}) => ({ pct, resetsAt, ...extra });
+const model = (name, pct, resetsAt = WEEK_END, extra = {}) => ({ name, pct, resetsAt, ...extra });
+const SHAPES = {
+  noFive: { sevenDay: win(71), scoped: [model('Fable', 82)] },
+  weekOnly: { sevenDay: win(34) },
+  team: { fiveHour: win(41, SOON), scoped: [model('Fable', 10)] },
+  normal: { fiveHour: win(20, SOON), sevenDay: win(81), scoped: [model('Fable', 95)] },
+};
+const accountRow = (usage, extra = {}) => ({ number: 1, active: true, email: 'a@b.c', alias: 'work', usageStatus: 'ok', usage, ...extra });
+const trayOf = (usage, opts = {}, extra = {}, stateExtra = {}, tr) => U.trayInfo({ phase: 'ok', accounts: [accountRow(usage, extra)], ...stateExtra }, NOW, opts, tr);
+const hoursFromNow = (h) => new Date(NOW + h * 3_600_000).toISOString();
+const MODES = ['5h', '7d', 'both', 'max', 'off'];
+// [title, ring, level] for every mode, in MODES order.
+const modes = (usage, extra) => MODES.map((mode) => {
+  const info = trayOf(usage, { mode }, extra);
+  return [info.title, info.pct, info.level];
+});
+
+test('hasPct: a window with a finite number; 0 counts, nothing else does', () => {
+  for (const w of [{ pct: 0 }, { pct: 71 }, { pct: 100.5 }]) assert.equal(U.hasPct(w), true, JSON.stringify(w));
+  for (const w of [null, undefined, {}, { pct: null }, { pct: '71' }, { pct: NaN }, { pct: Infinity }, 'x', 7]) assert.equal(U.hasPct(w), false, String(w));
+});
+
+test('modelWindows: only numbers, fullest first, ties in cswap’s order, the input untouched', () => {
+  const a = model('A', 10);
+  const b = model('B', 82);
+  const c = model('C', 10);
+  const zero = model('Zero', 0);
+  const scoped = [a, null, b, { name: 'NoPct' }, c, 'junk', { name: 'Text', pct: '90' }, zero];
+  assert.deepEqual(U.modelWindows({ scoped }), [b, a, c, zero]);
+  assert.equal(scoped[0], a, 'the list cswap sent keeps its order');
+  for (const usage of [null, undefined, {}, { scoped: null }, { scoped: 'x' }, { scoped: {} }]) assert.deepEqual(U.modelWindows(usage), []);
+});
+
+test('mainWindows: every row of the table', () => {
+  const five = win(20, SOON);
+  const seven = win(34);
+  const fable = model('Fable', 82);
+  const opus = model('Opus', 30);
+  const third = model('Third', 5);
+  const shape = (usage) => {
+    const { shown, rest } = U.mainWindows(usage);
+    return { shown: shown.map((s) => (s.kind === 'model' ? `model:${s.name}` : s.kind)), rest: rest.map((w) => w.name) };
+  };
+  // 5h + 7d: as ever, the models stay in rest
+  assert.deepEqual(shape({ fiveHour: five, sevenDay: seven }), { shown: ['5h', '7d'], rest: [] });
+  assert.deepEqual(shape({ fiveHour: five, sevenDay: seven, scoped: [opus, fable] }), { shown: ['5h', '7d'], rest: ['Fable', 'Opus'] });
+  // 5h, no 7d, model: a Team seat
+  assert.deepEqual(shape({ fiveHour: five, scoped: [opus, fable] }), { shown: ['5h', 'model:Fable'], rest: ['Opus'] });
+  // 5h only
+  assert.deepEqual(shape({ fiveHour: five }), { shown: ['5h'], rest: [] });
+  // 7d + model, no 5h: the week keeps its place on the right
+  assert.deepEqual(shape({ sevenDay: seven, scoped: [fable] }), { shown: ['model:Fable', '7d'], rest: [] });
+  assert.deepEqual(shape({ sevenDay: seven, scoped: [opus, third, fable] }), { shown: ['model:Fable', '7d'], rest: ['Opus', 'Third'] });
+  // 7d only
+  assert.deepEqual(shape({ sevenDay: seven }), { shown: ['7d'], rest: [] });
+  // models only
+  assert.deepEqual(shape({ scoped: [opus, third, fable] }), { shown: ['model:Fable', 'model:Opus'], rest: ['Third'] });
+  assert.deepEqual(shape({ scoped: [fable] }), { shown: ['model:Fable'], rest: [] });
+  // nothing
+  for (const usage of [null, undefined, {}, { spend: { pct: 5 } }, { scoped: [] }]) assert.deepEqual(shape(usage), { shown: [], rest: [] });
+  // A window with no number is missing, whatever else it has
+  assert.deepEqual(shape({ fiveHour: { resetsAt: SOON }, sevenDay: seven }), { shown: ['7d'], rest: [] });
+  assert.deepEqual(shape({ fiveHour: five, sevenDay: { pct: null }, scoped: [{ name: 'NoPct' }] }), { shown: ['5h'], rest: [] });
+  // An idle 5-hour window is a window: 0 % without a reset time
+  assert.deepEqual(shape({ fiveHour: { pct: 0 }, sevenDay: seven, scoped: [fable] }), { shown: ['5h', '7d'], rest: ['Fable'] });
+});
+
+test('mainWindows: slots carry the window itself, and a name only for a model', () => {
+  const seven = win(34);
+  const fable = model('Fable', 82);
+  assert.deepEqual(U.mainWindows({ sevenDay: seven, scoped: [fable] }).shown, [
+    { kind: 'model', win: fable, name: 'Fable' },
+    { kind: '7d', win: seven },
+  ]);
+  assert.equal(U.mainWindows({ scoped: [{ pct: 5 }] }).shown[0].name, '?', 'a window without a name');
+  assert.deepEqual(U.mainWindows({ fiveHour: { pct: 0 } }).shown, [{ kind: '5h', win: { pct: 0 } }]);
+});
+
+test('noSessionLimit: only fresh data that has limits and no 5-hour window claims it', () => {
+  assert.equal(U.noSessionLimit({ usage: SHAPES.noFive }), true);
+  assert.equal(U.noSessionLimit({ usage: SHAPES.weekOnly }), true);
+  assert.equal(U.noSessionLimit({ usage: { scoped: [model('Fable', 0)] } }), true);
+  assert.equal(U.noSessionLimit({ usage: { fiveHour: null, sevenDay: win(1) } }), true);
+  // stale data shows what it has and claims nothing
+  assert.equal(U.noSessionLimit({ usage: null, lastGoodUsage: SHAPES.noFive, lastGoodAgeSeconds: 216000 }), false);
+  // an idle 5-hour window is a 5-hour window
+  assert.equal(U.noSessionLimit({ usage: { fiveHour: { pct: 0 }, sevenDay: win(1) } }), false);
+  assert.equal(U.noSessionLimit({ usage: SHAPES.team }), false);
+  assert.equal(U.noSessionLimit({ usage: SHAPES.normal }), false);
+  // cswap sent a window, only without a number: not ours to deny
+  assert.equal(U.noSessionLimit({ usage: { fiveHour: { resetsAt: SOON }, sevenDay: win(1) } }), false);
+  // nothing to go on
+  for (const row of [null, undefined, {}, { usage: null }, { usage: {} }, { usage: { spend: { pct: 5 } } }, { usage: { sevenDay: { resetsAt: SOON } } }]) {
+    assert.equal(U.noSessionLimit(row), false, JSON.stringify(row));
+  }
+});
+
+test('loginExpiry: from 3 days ahead, urgent under 24 h, expired from the moment itself', () => {
+  const at = (seconds) => new Date(NOW + seconds * 1000).toISOString();
+  const read = (seconds) => U.loginExpiry({ loginExpiresAt: at(seconds) }, NOW);
+  assert.equal(U.LOGIN_WARN_S, 3 * 86400);
+  assert.equal(U.LOGIN_URGENT_S, 86400);
+  assert.equal(read(3 * 86400 + 1), null, 'just outside 3 days');
+  assert.equal(read(3 * 86400), null, 'exactly 3 days is not less than 3 days');
+  assert.deepEqual(read(3 * 86400 - 1), { at: NOW + (3 * 86400 - 1) * 1000, seconds: 3 * 86400 - 1, expired: false, urgent: false }, 'just inside');
+  assert.deepEqual(read(86400), { at: NOW + 86400 * 1000, seconds: 86400, expired: false, urgent: false }, 'exactly 24 h is not urgent yet');
+  assert.deepEqual(read(86399), { at: NOW + 86399 * 1000, seconds: 86399, expired: false, urgent: true }, 'just under 24 h');
+  assert.deepEqual(read(1), { at: NOW + 1000, seconds: 1, expired: false, urgent: true });
+  assert.deepEqual(read(0), { at: NOW, seconds: 0, expired: true, urgent: true }, 'the moment itself');
+  assert.deepEqual(read(-172800), { at: NOW - 172800000, seconds: 0, expired: true, urgent: true }, 'seconds never go negative');
+  // cswap writes whole seconds with Z
+  assert.equal(U.loginExpiry({ loginExpiresAt: '2026-09-30T12:00:00Z' }, NOW).seconds, 86400);
+  for (const raw of [undefined, null, '', 'soon', 'not a date', 1790000000000, {}, true]) {
+    assert.equal(U.loginExpiry({ loginExpiresAt: raw }, NOW), null, String(raw));
+  }
+  assert.equal(U.loginExpiry(null, NOW), null);
+  assert.equal(U.loginExpiry({}, NOW), null);
+});
+
+test('badges: the login pill follows the status, in amber then red', () => {
+  const login = (h, extra = {}) => U.badges({ number: 3, usageStatus: 'ok', usage: fresh, loginExpiresAt: hoursFromNow(h), ...extra }, undefined, NOW).find((b) => b.key === 'login');
+  const title = 'Log in to this account again in Claude Code, then run: cswap add --slot 3';
+  assert.equal(login(72), undefined, 'not yet');
+  assert.deepEqual(login(60), { key: 'login', label: 'Login expires in 2d 12h', tone: 'warn', title });
+  assert.deepEqual(login(24), { key: 'login', label: 'Login expires in 1d', tone: 'warn', title });
+  assert.deepEqual(login(10), { key: 'login', label: 'Login expires in 10h', tone: 'crit', title }, 'red under 24 h');
+  assert.deepEqual(login(-48), { key: 'login', label: 'Login expired', tone: 'crit', title });
+  // Those statuses already say it, or there is no login to lapse
+  for (const usageStatus of ['relogin_required', 'no_credentials', 'api_key']) {
+    assert.equal(login(10, { usageStatus }), undefined, usageStatus);
+    assert.equal(login(-48, { usageStatus }), undefined, usageStatus);
+  }
+  for (const usageStatus of ['token_expired', 'keychain_unavailable', 'foreign_credential', 'unavailable', 'rate_limited_by_moon']) {
+    assert.ok(login(10, { usageStatus }), usageStatus);
+  }
+  // Right after the status badge
+  const keys = U.badges({ number: 3, active: true, usageStatus: 'token_expired', usage: null, lastGoodUsage: fresh, loginExpiresAt: hoursFromNow(60) }, undefined, NOW).map((b) => b.key);
+  assert.deepEqual(keys, ['active', 'token_expired', 'login', 'stale']);
+  // Two arguments: the real clock
+  assert.equal(U.badges({ number: 3, usage: fresh, loginExpiresAt: new Date(Date.now() + 10 * 3_600_000).toISOString() }).find((b) => b.key === 'login').tone, 'crit');
+  assert.equal(U.badges({ number: 3, usage: fresh, loginExpiresAt: '2020-01-01T00:00:00Z' })[0].label, 'Login expired');
+  // In the translator's language
+  const tip = U.badges({ number: 3, usage: fresh, loginExpiresAt: hoursFromNow(60) }, ru, NOW)[0];
+  assert.equal(tip.label, 'Вход истекает через 2 д 12 ч');
+  assert.equal(tip.title, 'Войдите в этот аккаунт заново в Claude Code, затем выполните: cswap add --slot 3');
+  assert.equal(U.badges({ number: 3, usage: fresh, loginExpiresAt: hoursFromNow(-1) }, de, NOW)[0].label, 'Anmeldung abgelaufen');
+});
+
+test('menuLabel: the login note after the status, before stale; disabled rows keep it', () => {
+  const line = (extra, tr) => U.menuLabel({ number: 2, email: 'b@x', usageStatus: 'ok', usage: null, ...extra }, NOW, tr);
+  assert.equal(line({ loginExpiresAt: hoursFromNow(60) }), '2  b@x  — login expires in 2d 12h');
+  assert.equal(line({ loginExpiresAt: hoursFromNow(-1) }), '2  b@x  — login expired');
+  assert.equal(line({ loginExpiresAt: hoursFromNow(100) }), '2  b@x');
+  assert.equal(line({ disabled: true, usageStatus: 'token_expired', lastGoodUsage: { sevenDay: win(33) }, loginExpiresAt: hoursFromNow(10) }), '2  b@x  7d 33% (2d 6h)  — disabled, token expired, login expires in 10h, stale');
+  for (const usageStatus of ['relogin_required', 'no_credentials', 'api_key']) {
+    assert.doesNotMatch(line({ usageStatus, loginExpiresAt: hoursFromNow(-1) }), /login expire/, usageStatus);
+  }
+  assert.equal(line({ loginExpiresAt: hoursFromNow(10) }, ru), '2  b@x  — вход истекает через 10 ч');
+  assert.equal(line({ loginExpiresAt: hoursFromNow(-1) }, de), '2  b@x  — Anmeldung abgelaufen');
+});
+
+test('trayInfo, no 5-hour window: every mode reads the week; max the fullest; the colour follows the fullest', () => {
+  assert.deepEqual(modes(SHAPES.noFive), [
+    ['71%', 71, 'warn'], // 5h: never "–"
+    ['71%', 71, 'warn'],
+    ['71%', 71, 'warn'], // both: never "– · 71%"
+    ['82%', 82, 'warn'], // max: the highest of the week and every model
+    ['', 71, 'warn'], // off: no text, the ring is the week
+  ]);
+  assert.equal(trayOf(SHAPES.noFive).tooltip, 'work · 7d 71% · Fable 82% · no 5-hour limit');
+  // the name stays in front
+  assert.equal(trayOf(SHAPES.noFive, { showName: true }).title, 'work 71%');
+  assert.equal(trayOf(SHAPES.noFive, { mode: 'off', showName: true }).title, 'work');
+  // a 5-hour window without a number counts as missing here too
+  assert.deepEqual(modes({ ...SHAPES.noFive, fiveHour: { resetsAt: SOON } })[0], ['71%', 71, 'warn']);
+});
+
+test('trayInfo, week only: no dash, no model, the plain level', () => {
+  assert.deepEqual(modes(SHAPES.weekOnly), [
+    ['34%', 34, 'ok'],
+    ['34%', 34, 'ok'],
+    ['34%', 34, 'ok'],
+    ['34%', 34, 'ok'],
+    ['', 34, 'ok'],
+  ]);
+  assert.equal(trayOf(SHAPES.weekOnly).tooltip, 'work · 7d 34% · no 5-hour limit');
+  assert.equal(trayOf({ sevenDay: win(95) }).level, 'crit');
+});
+
+test('trayInfo, models only: the fullest stands in for the week', () => {
+  const usage = { scoped: [model('Opus', 30), model('Fable', 82), model('Sonnet', 12)] };
+  assert.deepEqual(modes(usage), [
+    ['82%', 82, 'warn'],
+    ['82%', 82, 'warn'],
+    ['82%', 82, 'warn'],
+    ['82%', 82, 'warn'],
+    ['', 82, 'warn'],
+  ]);
+  assert.equal(trayOf(usage).tooltip, 'work · Fable 82% · Opus 30% · Sonnet 12% · no 5-hour limit');
+});
+
+test('trayInfo, Team seat (5h, no 7d): 7d, both and max read the model; 5h and off stay on the 5h', () => {
+  assert.deepEqual(modes(SHAPES.team), [
+    ['41%', 41, 'ok'],
+    ['10%', 10, 'ok'],
+    ['41% · 10%', 41, 'ok'],
+    ['41%', 41, 'ok'],
+    ['', 41, 'ok'],
+  ]);
+  assert.equal(trayOf(SHAPES.team).tooltip, 'work · 5h 41% · Fable 10%', 'it has a 5-hour window: nothing about one missing');
+  const hot = { fiveHour: win(41, SOON), scoped: [model('Fable', 80), model('Opus', 5)] };
+  assert.deepEqual(modes(hot), [
+    ['41%', 41, 'ok'],
+    ['80%', 80, 'warn'],
+    ['41% · 80%', 41, 'warn'],
+    ['80%', 80, 'warn'],
+    ['', 41, 'ok'],
+  ]);
+  assert.equal(trayOf({ fiveHour: win(41, SOON), scoped: [model('Fable', 0)] }, { mode: 'both' }).title, '41% · 0%', 'a 0 is a number');
+});
+
+test('trayInfo, the default shape: models stay out of the title, the level and the tooltip', () => {
+  assert.deepEqual(modes(SHAPES.normal), [
+    ['20%', 20, 'ok'],
+    ['81%', 81, 'warn'],
+    ['20% · 81%', 20, 'warn'],
+    ['81%', 81, 'warn'],
+    ['', 20, 'ok'],
+  ]);
+  const info = trayOf(SHAPES.normal, { locale: 'en-US' });
+  assert.equal(info.tooltip, 'work · 5h 20% · 7d 81%');
+  assert.equal(info.tooltipLines.length, 2, 'the session and the week, no model line');
+  assert.match(plain(info.tooltipLines[1]), /^Week: 81% · resets /);
+  // 5h only stays what it was, "–" for the missing week
+  assert.deepEqual(modes({ fiveHour: win(41, SOON) })[2], ['41% · –', 41, 'ok']);
+  // no windows at all: as ever
+  for (const usage of [null, {}, { spend: { pct: 5 } }, { sevenDay: { resetsAt: SOON } }]) {
+    assert.deepEqual(modes(usage), MODES.map((mode) => [mode === 'off' ? '' : mode === 'both' ? '– · –' : '–', null, 'none']), JSON.stringify(usage));
+    assert.equal(trayOf(usage).tooltip, 'work', JSON.stringify(usage));
+  }
+});
+
+test('trayInfo: a rolled-over window keeps its text and stops counting', () => {
+  // The model has rolled over: it does not colour, and max does not read it
+  const fableGone = { sevenDay: win(40), scoped: [model('Fable', 95, PAST)] };
+  assert.deepEqual(modes(fableGone), [
+    ['40%', 40, 'ok'],
+    ['40%', 40, 'ok'],
+    ['40%', 40, 'ok'],
+    ['40%', 40, 'ok'],
+    ['', 40, 'ok'],
+  ]);
+  assert.equal(trayOf(fableGone).tooltip, 'work · 7d 40% · Fable window has reset, waiting for new data · no 5-hour limit');
+  // The week has rolled over, the model has not
+  const weekGone = { sevenDay: win(95, PAST), scoped: [model('Fable', 80)] };
+  assert.deepEqual(modes(weekGone), [
+    ['–', null, 'warn'],
+    ['–', null, 'warn'],
+    ['–', null, 'warn'],
+    ['80%', 80, 'warn'],
+    ['', null, 'warn'],
+  ]);
+  assert.equal(trayOf(weekGone).tooltip, 'work · 7d window has reset, waiting for new data · Fable 80% · no 5-hour limit');
+  // Everything has rolled over
+  const allGone = { sevenDay: win(95, PAST), scoped: [model('Fable', 95, PAST)] };
+  assert.deepEqual(modes(allGone)[3], ['–', null, 'none']);
+  // Team seat whose model has rolled over
+  assert.deepEqual(trayOf({ fiveHour: win(41, SOON), scoped: [model('Fable', 95, PAST)] }, { mode: 'both' }).title, '41% · –');
+  assert.equal(trayOf({ fiveHour: win(41, SOON), scoped: [model('Fable', 95, PAST)] }).tooltip, 'work · 5h 41% · Fable window has reset, waiting for new data');
+});
+
+test('trayInfo: the level is the highest of the week and the live models, whichever mode', () => {
+  assert.equal(trayOf({ sevenDay: win(20), scoped: [model('Fable', 90)] }).level, 'crit');
+  assert.equal(trayOf({ sevenDay: win(20), scoped: [model('Fable', 74.5)] }).level, 'warn', 'reads 75');
+  assert.equal(trayOf({ sevenDay: win(95), scoped: [model('Fable', 20)] }).level, 'crit');
+  assert.equal(trayOf({ sevenDay: win(20), scoped: [model('Fable', 74.4)] }).level, 'ok', 'reads 74');
+  assert.equal(trayOf({ sevenDay: win(20), scoped: [model('Fable', 95, PAST), model('Opus', 80)] }).level, 'warn', 'not from the rolled-over one');
+});
+
+test('trayInfo: doubt marker, stale and aged as ever on the new shapes; stale claims nothing', () => {
+  const failing = { error: { kind: 'timeout', message: 'x' }, fetchedAt: '2026-09-29T09:00:00Z' };
+  const info = trayOf(SHAPES.noFive, {}, {}, failing);
+  assert.equal(info.title, '71%?');
+  assert.equal(info.tooltip, 'work · 7d 71% · Fable 82% · no 5-hour limit · not updated for 3h');
+  assert.equal(trayOf(SHAPES.noFive, { mode: 'off' }, {}, failing).title, '', 'off has no text to mark');
+  const stale = trayOf(null, {}, { lastGoodUsage: SHAPES.noFive, lastGoodAgeSeconds: 216000, usageStatus: 'token_expired' });
+  assert.equal(stale.title, '71%?');
+  assert.equal(stale.pct, 71);
+  assert.equal(stale.level, 'warn');
+  assert.equal(stale.tooltip, 'work · 7d 71% · Fable 82% · stale');
+  assert.equal(trayOf(SHAPES.weekOnly, {}, { usageAgeSeconds: 540 }).tooltip, 'work · 7d 34% · no 5-hour limit · 9m old');
+  // the pace mark goes on any window that has one
+  assert.equal(trayOf({ sevenDay: win(71, WEEK_END, { aheadOfPace: true }), scoped: [model('Fable', 82, WEEK_END, { aheadOfPace: true })] }).tooltip, 'work · 7d 71% (ahead of pace) · Fable 82% (ahead of pace) · no 5-hour limit');
+});
+
+test('trayInfo: the first line ends with the login, under the conditions of the badge', () => {
+  const tip = (h, extra, usage = SHAPES.noFive) => trayOf(usage, {}, { loginExpiresAt: hoursFromNow(h), ...extra }).tooltip;
+  assert.equal(tip(60), 'work · 7d 71% · Fable 82% · no 5-hour limit · login expires in 2d 12h');
+  assert.equal(tip(-1), 'work · 7d 71% · Fable 82% · no 5-hour limit · login expired');
+  assert.equal(tip(100), 'work · 7d 71% · Fable 82% · no 5-hour limit');
+  assert.equal(tip(60, {}, SHAPES.normal), 'work · 5h 20% · 7d 81% · login expires in 2d 12h');
+  assert.equal(tip(60, { usageAgeSeconds: 540 }), 'work · 7d 71% · Fable 82% · no 5-hour limit · 9m old · login expires in 2d 12h');
+  for (const usageStatus of ['relogin_required', 'no_credentials', 'api_key']) {
+    assert.doesNotMatch(tip(-1, { usageStatus }), /login expire/, usageStatus);
+  }
+  assert.equal(trayOf(SHAPES.normal, {}, { loginExpiresAt: hoursFromNow(60) }, {}, ru).tooltip, 'work · 5 ч 20% · 7 дн 81% · вход истекает через 2 д 12 ч');
+  assert.equal(trayOf(SHAPES.normal, {}, { loginExpiresAt: hoursFromNow(-1) }, {}, de).tooltip, 'work · 5 Std. 20 % · 7 T 81 % · Anmeldung abgelaufen');
+  // only the active account is on this line
+  const other = accountRow(SHAPES.normal, { active: false, loginExpiresAt: hoursFromNow(-1) });
+  assert.equal(U.trayInfo({ phase: 'ok', accounts: [other, accountRow(SHAPES.normal)] }, NOW).tooltip, 'work · 5h 20% · 7d 81%');
+});
+
+test('trayInfo tooltipLines: one line per model with its reset ahead, only where a model stands in', () => {
+  const lines = (usage, opts = {}, tr) => (trayOf(usage, { locale: 'en-US', ...opts }, {}, {}, tr).tooltipLines || []).map(plain);
+  const [week, fable, ...more] = lines(SHAPES.noFive);
+  assert.match(week, /^Week: 71% · resets [A-Z][a-z]{2} \d{1,2}$/);
+  assert.match(fable, /^Fable: 82% · resets [A-Z][a-z]{2} \d{1,2}$/);
+  assert.deepEqual(more, []);
+  // several, fullest first; a rolled-over one is already in the first line, one with no date has none
+  const many = lines({ sevenDay: win(10), scoped: [model('Opus', 30), model('Gone', 99, PAST), model('Fable', 82), model('NoReset', 5, null)] });
+  assert.deepEqual(many.map((l) => l.split(' · ')[0]), ['Week: 10%', 'Fable: 82%', 'Opus: 30%']);
+  // Team seat: under the session line
+  const team = lines(SHAPES.team);
+  assert.equal(team.length, 2);
+  assert.match(team[0], /^Session: 41% · resets at /);
+  assert.match(team[1], /^Fable: 10% · resets /);
+  // the week's date format applies, in the language of the rest
+  assert.match(lines(SHAPES.noFive, { weeklyDateFormat: 'date-day' })[1], /^Fable: 82% · resets [A-Z][a-z]{2}, /);
+  assert.match(lines(SHAPES.noFive, { locale: 'de-DE' }, de)[1], /^Fable: 82 % · Reset /);
+  assert.match(lines(SHAPES.noFive, { locale: 'ru-RU' }, ru)[1], /^Fable: 82% · обновится /);
+  // a window without a date has no line
+  assert.deepEqual(lines({ sevenDay: { pct: 10 }, scoped: [{ name: 'Fable', pct: 20 }] }), []);
+  // the same for stale data: its first line says so
+  const stale = trayOf(null, { locale: 'en-US' }, { lastGoodUsage: SHAPES.noFive });
+  assert.equal(stale.tooltipLines.length, 2);
+});
+
 // --- the same English without i18n.js (today's index.html loads usage.js alone)
 
 const USAGE_SRC = fs.readFileSync(path.join(__dirname, '../src/shared/usage.js'), 'utf8');
@@ -491,6 +834,10 @@ function scenarios() {
     { number: 8, alias: 'work', active: true, usageStatus: 'ok', usage: { sevenDay: { pct: 90, aheadOfPace: true } } },
     { number: 9, email: 'z@z', usageStatus: 'rate_limited_by_moon', usage: null },
     ...STATUSES.map((st, i) => ({ number: 10 + i, email: `${st}@x`, usageStatus: st, usage: null })),
+    accountRow(SHAPES.noFive, { number: 20, loginExpiresAt: hoursFromNow(60) }),
+    accountRow(SHAPES.weekOnly, { number: 21, loginExpiresAt: hoursFromNow(10) }),
+    accountRow(SHAPES.team, { number: 22, loginExpiresAt: hoursFromNow(-1) }),
+    accountRow(SHAPES.normal, { number: 23 }),
   ];
   const states = [
     null,
@@ -505,6 +852,9 @@ function scenarios() {
     { phase: 'ok', accounts: [{ ...offRow, active: true }] },
     { phase: 'ok', accounts: [{ ...rows[3], active: true }], error: { message: 'x' }, fetchedAt: '2026-09-29T09:00:00Z' },
     { phase: 'ok', accounts: [{ ...rows[3], active: true }], error: { message: 'x' } },
+    { phase: 'ok', accounts: [accountRow(SHAPES.noFive, { loginExpiresAt: hoursFromNow(60) })] },
+    { phase: 'ok', accounts: [accountRow(SHAPES.weekOnly, { loginExpiresAt: hoursFromNow(-1) })] },
+    { phase: 'ok', accounts: [accountRow(SHAPES.team)] },
   ];
   return { now, rows, states };
 }
@@ -513,7 +863,7 @@ function everything(Usage, tr) {
   const { now, rows, states } = scenarios();
   const out = [];
   for (const row of rows) {
-    out.push(Usage.badges(row, tr), Usage.menuLabel(row, now, tr), Usage.label(row, tr), Usage.shortName(row, tr));
+    out.push(Usage.badges(row, tr, now), Usage.menuLabel(row, now, tr), Usage.label(row, tr), Usage.shortName(row, tr));
     out.push(Usage.paceNote(row.usage && row.usage.sevenDay, tr));
   }
   for (const s of [0, 45, 720, 5400, 7200, 3 * 86400 + 4 * 3600, 86400]) out.push(Usage.formatDuration(s, tr));
@@ -565,4 +915,17 @@ test('as a classic script after i18n.js: it uses window.I18n', () => {
   const later = cswapIso(local(2, 15, 59));
   const state = lineState({ pct: 20, resetsAt: later }, { pct: 34, resetsAt: cswapIso(local(6, 9, 5)) });
   assert.deepEqual(Array.from(page.Usage.trayInfo(state, local(2, 12, 0).getTime(), { locale: 'en-US' }).tooltipLines, plain), ['Session: 20% · resets at 3:59 PM', 'Week: 34% · resets Oct 6']);
+});
+
+test('the English of the new keys, with i18n.js and without', () => {
+  const alone = {};
+  vm.runInNewContext(USAGE_SRC, alone);
+  const row = accountRow(SHAPES.noFive, { loginExpiresAt: hoursFromNow(10) });
+  const expired = accountRow(SHAPES.noFive, { loginExpiresAt: hoursFromNow(-1) });
+  for (const r of [row, expired]) {
+    assert.deepEqual(JSON.parse(JSON.stringify(alone.Usage.badges(r, undefined, NOW))), U.badges(r, undefined, NOW));
+    assert.equal(alone.Usage.menuLabel(r, NOW), U.menuLabel(r, NOW));
+    assert.equal(alone.Usage.trayInfo({ phase: 'ok', accounts: [r] }, NOW).tooltip, U.trayInfo({ phase: 'ok', accounts: [r] }, NOW).tooltip);
+  }
+  assert.equal(alone.Usage.trayInfo({ phase: 'ok', accounts: [row] }, NOW).tooltip, 'work · 7d 71% · Fable 82% · no 5-hour limit · login expires in 10h');
 });

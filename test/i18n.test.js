@@ -244,3 +244,65 @@ test('as a classic script it defines one global, I18n, and nothing else', () => 
   assert.equal(sandbox.I18n.translator('uk')('menu.quit'), 'Вийти');
   assert.equal(sandbox.I18n.formatDuration('ru', 90), '1 мин');
 });
+
+// --- accounts without a 5-hour window, per-model limits, login expiry -----------
+
+test('the keys for those accounts, in every language, with their placeholders', () => {
+  const want = {
+    'hero.noSession': [],
+    'hero.noSessionTip': [],
+    'trayTip.noSession': [],
+    'trayTip.model': ['{name}', '{pct}'],
+    'trayTip.loginSoon': ['{time}'],
+    'trayTip.loginExpired': [],
+    'badge.loginSoon': ['{time}'],
+    'badge.loginExpired': [],
+    'badge.tip.login': ['{n}'],
+    'menuLine.loginSoon': ['{time}'],
+    'menuLine.loginExpired': [],
+    'notify.modelWarn': ['{model}', '{name}', '{p}'],
+    'notify.modelDanger': ['{model}', '{name}', '{p}'],
+    'notify.modelReached': ['{model}', '{name}'],
+    'notify.loginSoon': ['{name}', '{time}'],
+    'notify.loginSoonBody': ['{n}'],
+    'stats.nearLimitTipAny': ['{pct}'],
+  };
+  for (const [key, vars] of Object.entries(want)) {
+    for (const lang of LANGS) assert.deepEqual(placeholders(STRINGS[lang][key]), vars, `${lang} ${key}`);
+  }
+  // A percentage reads as the language writes it, as in trayTip.week.
+  assert.deepEqual(LANGS.map((lang) => I.translator(lang)('trayTip.model', { name: 'Fable', pct: 82 })), ['Fable: 82%', 'Fable: 82%', 'Fable: 82%', 'Fable: 82 %']);
+  // The endings follow their weekly siblings.
+  const ending = (text) => text.split(/ [—–] /)[1];
+  for (const lang of LANGS) {
+    assert.equal(ending(STRINGS[lang]['notify.modelWarn']), ending(STRINGS[lang]['notify.weeklyWarn']), `${lang} warn`);
+    assert.equal(ending(STRINGS[lang]['notify.modelDanger']), ending(STRINGS[lang]['notify.weeklyDanger']), `${lang} danger`);
+  }
+  // The tip and the notification tell the same remedy, with its slot.
+  for (const lang of LANGS) {
+    assert.equal(STRINGS[lang]['notify.loginSoonBody'], STRINGS[lang]['badge.tip.login'], lang);
+    assert.match(STRINGS[lang]['badge.tip.login'], /cswap add --slot \{n\}$/, lang);
+  }
+  // Never a plan as a fact: the tip says what Anthropic reports and how verified plans behave.
+  for (const lang of LANGS) {
+    assert.doesNotMatch(STRINGS[lang]['hero.noSession'], /Ultra/, lang);
+    assert.doesNotMatch(STRINGS[lang]['trayTip.noSession'], /Ultra/, lang);
+    assert.match(STRINGS[lang]['hero.noSessionTip'], /^Anthropic .*Ultra/, lang);
+  }
+});
+
+test('those texts as the spec has them', () => {
+  const texts = (key) => LANGS.map((lang) => STRINGS[lang][key]);
+  assert.deepEqual(texts('hero.noSession'), ['No 5-hour limit', 'Без 5-часового лимита', 'Без 5-годинного ліміту', 'Kein 5-Stunden-Limit']);
+  assert.deepEqual(texts('trayTip.noSession'), ['no 5-hour limit', 'без 5-часового лимита', 'без 5-годинного ліміту', 'kein 5-Stunden-Limit']);
+  assert.deepEqual(texts('badge.loginSoon'), ['Login expires in {time}', 'Вход истекает через {time}', 'Вхід спливає через {time}', 'Anmeldung läuft in {time} ab']);
+  assert.deepEqual(texts('badge.loginExpired'), ['Login expired', 'Вход истёк', 'Вхід сплив', 'Anmeldung abgelaufen']);
+  for (const key of ['trayTip.loginSoon', 'menuLine.loginSoon']) {
+    assert.deepEqual(texts(key), ['login expires in {time}', 'вход истекает через {time}', 'вхід спливає через {time}', 'Anmeldung läuft in {time} ab'], key);
+  }
+  for (const key of ['trayTip.loginExpired', 'menuLine.loginExpired']) {
+    assert.deepEqual(texts(key), ['login expired', 'вход истёк', 'вхід сплив', 'Anmeldung abgelaufen'], key);
+  }
+  assert.deepEqual(texts('notify.modelReached'), ['{name}: {model} limit reached', '{name}: лимит {model} исчерпан', '{name}: ліміт {model} вичерпано', '{name}: {model}-Limit erreicht']);
+  assert.deepEqual(texts('notify.loginSoon'), ['{name}: login expires in {time}', '{name}: вход истекает через {time}', '{name}: вхід спливає через {time}', '{name}: Anmeldung läuft in {time} ab']);
+});

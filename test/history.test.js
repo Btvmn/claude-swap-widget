@@ -8,6 +8,7 @@ const path = require('path');
 
 const { HistoryStore, historyKey, parseLine, KEY_RE, RETENTION_DAYS, SERVE_DAYS } = require('../src/history');
 const { AccountService } = require('../src/service');
+const { computeStats } = require('../src/shared/stats');
 
 const FAKE = path.join(__dirname, 'fixtures', 'fake-cswap');
 const NOW = Date.parse('2026-09-29T12:00:00Z');
@@ -253,6 +254,59 @@ test('a missing 5h or 7d is left out, never written as 0; a row with neither is 
   ]);
   // Accounts without a line are not in the index yet.
   assert.deepEqual(Object.keys(readIndex(h.dir).accounts).sort(), [K_ALICE, historyKey('erin@example.com', 'org-erin')].sort());
+});
+
+test('a row with only scoped numbers is recorded; none of 5h, 7d and scoped is skipped, spend alone too', (t) => {
+  const h = setup(t);
+  const at = NOW - 30_000;
+  const rows = [
+    row(ALICE, { scoped: [{ name: 'Fable', pct: 82.04, resetsAt: RESET_5H }] }, at),
+    row(BOB, { scoped: [{ name: 'Fable' }, { name: 'Opus', pct: null }, { pct: 5 }, { name: '__proto__', pct: 5 }, null] }, at),
+    row(DAVE, { spend: { used: 3, limit: 50, currency: 'USD' } }, at),
+  ];
+  assert.deepEqual(refresh(h, NOW, rows), { samples: 1, act: true });
+  assert.deepEqual(allLines(h.dir), [
+    { t: S(at), k: K_ALICE, a: 1, m: { Fable: 82 } },
+    { t: S(NOW), act: K_ALICE },
+  ]);
+  assert.deepEqual(Object.keys(readIndex(h.dir).accounts), [K_ALICE]);
+  assert.deepEqual(h.store.get(K_ALICE, 1).samples, [{ t: S(at), a: 1, m: { Fable: 82 } }]);
+
+  // With a number next to it, spend comes along.
+  const next = row(ALICE, { scoped: [{ name: 'Fable', pct: 83 }], spend: { used: 3, limit: 50, currency: 'USD' } }, NOW + 4 * MIN);
+  assert.equal(refresh(h, NOW + 5 * MIN, [next]).samples, 1);
+  assert.deepEqual(samplesOf(h.dir, K_ALICE).pop(), { t: S(NOW + 4 * MIN), k: K_ALICE, a: 1, m: { Fable: 83 }, u: 3, l: 50 });
+
+  // The dedupe holds after a restart, as for any other line.
+  h.store = h.reopen();
+  assert.equal(refresh(h, NOW + 6 * MIN, [next]).samples, 0);
+  assert.equal(samplesOf(h.dir, K_ALICE).length, 2);
+});
+
+test('accounts without a 5-hour window, a Team seat and their last good data keep what they have', (t) => {
+  const h = setup(t);
+  const at = NOW - 30_000;
+  const fable = (pct) => ({ name: 'Fable', pct, resetsAt: '2026-10-02T16:00:00.000417+00:00' });
+  const measured = NOW - 2 * DAY;
+  const rows = [
+    row(ALICE, { sevenDay: { pct: 71 }, scoped: [fable(82)] }, at),
+    row(BOB, { fiveHour: { pct: 41, resetsAt: RESET_5H }, scoped: [fable(0)] }, at),
+    { ...DAVE, usageStatus: 'relogin_required', usage: null, lastGoodUsage: { sevenDay: { pct: 33 }, scoped: [fable(12)] }, lastGoodFetchedAt: iso(measured), lastGoodAgeSeconds: 2 * 86_400 },
+  ];
+  assert.deepEqual(refresh(h, NOW, rows), { samples: 3, act: true });
+  const r5 = Math.round(Date.parse(RESET_5H) / MIN);
+  assert.deepEqual(samplesOf(h.dir, K_ALICE), [{ t: S(at), k: K_ALICE, a: 1, w: 71, m: { Fable: 82 } }]);
+  assert.deepEqual(samplesOf(h.dir, K_BOB), [{ t: S(at), k: K_BOB, h: 41, r5, m: { Fable: 0 } }]);
+  assert.deepEqual(samplesOf(h.dir, K_DAVE), [{ t: S(measured), k: K_DAVE, w: 33, m: { Fable: 12 } }]);
+});
+
+test('without any time, a change in a scoped window alone is a new line', (t) => {
+  const h = setup(t);
+  const bare = (pct) => ({ ...ALICE, usageStatus: 'ok', usage: { scoped: [{ name: 'Fable', pct }] } });
+  refresh(h, NOW, [bare(10)]);
+  refresh(h, NOW + MIN, [bare(10)]);
+  refresh(h, NOW + 2 * MIN, [bare(11)]);
+  assert.deepEqual(samplesOf(h.dir, K_ALICE).map((l) => [l.t, l.m.Fable]), [[S(NOW), 10], [S(NOW + 2 * MIN), 11]]);
 });
 
 test('act lines: first refresh, every change of the active account, and again after a restart', (t) => {
@@ -516,6 +570,33 @@ test('records the fake cswap list as main would: 5 samples, 1 act line, 5 index 
   assert.equal(Object.keys(index).length, 5);
   assert.equal(index[historyKey('carol@example.com', 'org-globex')].currency, 'USD');
   assert.equal(index[K_ALICE].alias, 'work');
+});
+
+test('fake cswap `ultra`: each shape is recorded, and the statistics read what was written', async (t) => {
+  const dir = pinFake(t, 'ultra');
+  const svc = new AccountService({ find: () => FAKE });
+  const store = new HistoryStore({ dir, log: () => {} });
+  svc.on('state', (s) => store.record(s));
+  await svc.refresh();
+  const of = (email, org) => {
+    const lines = samplesOf(dir, historyKey(email, org));
+    assert.equal(lines.length, 1, email);
+    const [{ h, w, m }] = lines;
+    return { h, w, m };
+  };
+  assert.deepEqual(of('alice@example.com', 'org-acme'), { h: undefined, w: 71, m: { Fable: 82 } });
+  assert.deepEqual(of('bob@example.com', 'org-bob'), { h: 3, w: 85, m: { Fable: 34 } });
+  assert.deepEqual(of('carol@example.com', 'org-globex'), { h: undefined, w: 12, m: undefined });
+  assert.deepEqual(of('dave@example.com', 'org-dave'), { h: undefined, w: 33, m: { Fable: 12 } });
+  assert.deepEqual(of('erin@example.com', 'org-initech'), { h: 41, w: undefined, m: { Fable: 0 } });
+
+  const alice = computeStats(store.get(K_ALICE, 8).samples, 'week');
+  assert.deepEqual([alice.peak, alice.hasSession, alice.topModel], [82, false, 'Fable']);
+  assert.ok(alice.buckets.some((b) => b.peakWindow));
+  const carol = computeStats(store.get(historyKey('carol@example.com', 'org-globex'), 8).samples, 'week');
+  assert.deepEqual([carol.peak, carol.hasSession, carol.topModel], [12, false, null]);
+  const erin = computeStats(store.get(historyKey('erin@example.com', 'org-initech'), 8).samples, 'week');
+  assert.deepEqual([erin.peak, erin.hasSession, erin.topModel], [41, true, 'Fable']);
 });
 
 test('fake cswap `nofetchedat`: times come from the ages', { skip: !fakeHas('nofetchedat') && 'fake has no nofetchedat yet' }, async (t) => {

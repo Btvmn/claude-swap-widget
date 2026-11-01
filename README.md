@@ -44,13 +44,35 @@ reads or writes your credentials itself.
   thin bar, the percentage and the time to that window's reset. So every
   account shows in how many days its week starts over (hover for the exact
   date); a window at its limit shows its reset in bold. Badges:
-  **Disabled**, **Token expired**, **Re-login**, **Stale**, **9m ago** for an
-  older measurement, **7d ahead of pace**.
+  **Disabled**, **Token expired**, **Re-login**, **Login expires in 2d 7h**,
+  **Stale**, **9m ago** for an older measurement, **7d ahead of pace**.
 - **Switch** on each row, a **⋯** menu (switch, in rotation on/off,
   statistics, copy email, remove), and **Switch to best account**
   (`cswap switch --strategy best`) and **Next** at the bottom.
 - Amber from 75 %, red from 90 %. Light and dark follow the system, or pick
   one.
+
+### Accounts without a 5-hour limit
+
+<p align="center">
+  <img src="docs/ultra.jpg" alt="The popover for an account with no 5-hour limit, in dark and light mode: two rings, Fable · week at 82 % and Week · all models at 71 %, with No 5-hour limit under them. Below, other accounts as rows: one with 5h and 7d lines, one with a single 7d line, one with Fable and 7d lines. A badge says Login expires in 2d 7h.">
+</p>
+
+Claude's [Ultra plan](https://support.claude.com/en/articles/17728952-what-is-the-ultra-plan)
+has no 5-hour limit on verified accounts, and a separate weekly limit for
+Fable. The widget follows what claude-swap reports for each account:
+
+- With no 5-hour window, the free ring shows the fullest model limit
+  (**Fable · week**) next to the week, with **No 5-hour limit** under them. A
+  week and nothing else gets one ring.
+- The account's row shows that limit in place of the 5h line.
+- The menu bar shows the week alone, in colour as soon as any weekly limit is
+  near its end, and the tooltip lists them all.
+- Team and Enterprise seats, which have a 5-hour window and only a per-model
+  week, show those two.
+
+The widget cannot see your plan, only the windows, so an account still
+waiting for verification keeps its 5-hour ring until the limit is lifted.
 
 ### Two looks for the rings
 
@@ -69,7 +91,9 @@ it: **Settings → Rings**.
 
 The graph button opens **Today**, **Week** or **Month** for any account, as a
 line, bars or summary cards: peak, average, time near the limit, time in use
-and spend. The history stays on this Mac for 32 days (see [Privacy](#privacy)).
+and spend. With no 5-hour window, the chart shows the week and the fullest
+model limit, and peak and average read the fuller of them. The history stays
+on this Mac for 32 days (see [Privacy](#privacy)).
 
 ### Menu bar
 
@@ -97,7 +121,9 @@ language, or you choose one in **Settings → Language**.
 - 📌 **Desktop widget.** The pin button keeps the window on the desktop.
   Click it again to return to the menu bar popover.
 - 🔔 **Notifications** when the active account reaches 75 % and 90 % of a
-  window, when it is used up, and when it is available again.
+  window or a per-model limit, when it is used up, and when it is available
+  again. Also three days before the stored login of any account in rotation
+  expires, so you can log in again before it stops working.
 - 🖱️ **Right-click menu** on the menu bar item (also the popover's **⋯**):
   all accounts with their usage (click to switch), Switch to Next / Best /
   Next Available, Disable / Enable Account, Add and Remove Account (shows the
@@ -108,7 +134,8 @@ language, or you choose one in **Settings → Language**.
 
 - macOS on Apple Silicon. Other platforms may work but are not tested.
 - [claude-swap](https://github.com/realiti4/claude-swap) **0.20 or newer**
-  (tested with 0.26.0 and 0.27.0b1), which needs Python 3.12 or newer.
+  (tested with 0.26.0 to 0.29.0), which needs Python 3.12 or newer. The login
+  warnings need 0.27 or newer, which reports when a login expires.
 - At least one Claude Code account added to claude-swap.
 
 ## Install
@@ -214,6 +241,21 @@ Run `uv tool upgrade claude-swap` or `pipx upgrade claude-swap`.
 </details>
 
 <details>
+<summary><b>"Re-login" or "Login expires in …"</b> on an account</summary>
+
+A stored login lasts until its refresh token expires, and only a fresh login
+replaces that token. Log in to that account in Claude Code (`/login`), then
+store the new login in its slot:
+
+```sh
+cswap add --slot 2      # the account's number, as in the widget's menu or cswap list
+```
+
+The badge's tooltip has the command with the right number.
+
+</details>
+
+<details>
 <summary><b>"No accounts yet"</b></summary>
 
 Add an account with `cswap add` (see [Install](#install)), then click
@@ -277,8 +319,9 @@ CSWAP_PATH="$PWD/test/fixtures/fake-cswap" npm start
 FAKE_CSWAP_SCENARIO=empty CSWAP_PATH="$PWD/test/fixtures/fake-cswap" npm start
 ```
 
-Scenarios: `default`, `empty`, `root`, `garbage`, `slow`, `stubborn`,
-`schema2`, `old`, `flood`, `crash`, `rolled`. `CSW_THEME=light|dark` forces
+Scenarios: `default`, `ultra` (accounts with no 5-hour window, Team seats,
+expiring logins), `empty`, `root`, `garbage`, `slow`, `stubborn`, `schema2`,
+`old`, `flood`, `crash`, `rolled`. `CSW_THEME=light|dark` forces
 the theme. `CSW_CAPTURE=out.png` saves a screenshot of the popover and quits.
 Every picture in this README was made this way, from the fake accounts.
 

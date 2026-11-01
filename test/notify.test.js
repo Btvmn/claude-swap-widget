@@ -391,3 +391,295 @@ test('attach: starts silent when the setting is off', () => {
   service.emit('state', live(91, 20));
   assert.deepEqual(posted.map((n) => n.options.body), ['work: session at 91% — almost out']);
 });
+
+// ── per-model weekly windows (usage.scoped) ─────────────────────────────────
+
+// Alice (work) at 10 % / 10 % with one model window.
+function modelRow(pct, { end = SEVEN_END, five = 10, seven = 10, name = 'Fable', more = [] } = {}) {
+  return acct(1, five, seven, {
+    alias: 'work',
+    usage: { fiveHour: { pct: five, resetsAt: FIVE_END }, sevenDay: { pct: seven, resetsAt: SEVEN_END }, scoped: [{ name, pct, resetsAt: end }, ...more] },
+  });
+}
+const fable = (pct, options) => state([modelRow(pct, options)]);
+
+test('a model at launch is taken as seen, at any level', () => {
+  for (const pct of [20, 80, 95, 100]) {
+    const { feed } = notifier();
+    assert.deepEqual(feed(fable(pct), fable(pct)), [], `${pct} %`);
+  }
+  // …and only the next crossing speaks.
+  const { feed } = notifier();
+  feed(fable(80));
+  assert.deepEqual(feed(fable(85)), [], 'still in the warn band');
+  assert.deepEqual(feed(fable(91)), [[TITLE, 'work: Fable at 91% this week — almost out']]);
+  assert.deepEqual(feed(fable(100)), [['work: Fable limit reached', 'Resets Fri, Oct 2 at 16:00.']]);
+
+  const atLimit = notifier();
+  atLimit.feed(fable(100));
+  assert.deepEqual(atLimit.feed(fable(100)), [], 'seeded at 100: said nothing, and says nothing');
+});
+
+test('a model warns, then danger, then the limit, once each; rounded as shown', () => {
+  const { feed } = notifier();
+  feed(fable(20));
+  assert.deepEqual(feed(fable(74.4)), [], '74.4 reads 74');
+  assert.deepEqual(feed(fable(74.6)), [[TITLE, 'work: Fable at 75% this week — running low']]);
+  assert.deepEqual(feed(fable(80), fable(89.4)), [], 'warn once');
+  assert.deepEqual(feed(fable(89.5)), [[TITLE, 'work: Fable at 90% this week — almost out']]);
+  assert.deepEqual(feed(fable(95), fable(99.4)), [], 'danger once');
+  assert.deepEqual(feed(fable(99.5)), [['work: Fable limit reached', 'Resets Fri, Oct 2 at 16:00.']], '99.5 reads 100');
+  assert.deepEqual(feed(fable(100), fable(100)), [], 'the limit once');
+  assert.deepEqual(feed(fable(95), fable(100)), [], 'not again in the same window, even after a dip');
+});
+
+test('a model jumping straight to danger or the limit is one notification', () => {
+  const a = notifier();
+  a.feed(fable(50));
+  assert.deepEqual(a.feed(fable(93)), [[TITLE, 'work: Fable at 93% this week — almost out']]);
+  assert.deepEqual(a.feed(fable(80)), [], 'no warn after it');
+
+  const b = notifier();
+  b.feed(fable(50));
+  assert.deepEqual(b.feed(fable(100)), [['work: Fable limit reached', 'Resets Fri, Oct 2 at 16:00.']]);
+  assert.deepEqual(b.feed(fable(92)), [], 'no danger after it');
+
+  const none = notifier();
+  none.feed(fable(50, { end: 'soon' }));
+  assert.deepEqual(none.feed(fable(100, { end: 'soon' })), [['work: Fable limit reached', '']], 'no readable reset, no body');
+});
+
+test('a model is armed again under warn, or by a reset time over an hour later', () => {
+  const { feed } = notifier();
+  feed(fable(50));
+  feed(fable(80));
+  assert.deepEqual(feed(fable(10)), [], 'the window reset');
+  assert.deepEqual(feed(fable(80)), [[TITLE, 'work: Fable at 80% this week — running low']], 'warn again');
+
+  // The limit is armed again the same way.
+  const b = notifier();
+  b.feed(fable(50));
+  b.feed(fable(100));
+  assert.deepEqual(b.feed(fable(5), fable(100)), [['work: Fable limit reached', 'Resets Fri, Oct 2 at 16:00.']]);
+
+  // The next window read for the first time already high.
+  const c = notifier();
+  c.feed(fable(50));
+  c.feed(fable(100));
+  assert.deepEqual(c.feed(fable(100, { end: inH(76.2) })), [], 'a few minutes off is the same window');
+  assert.deepEqual(c.feed(fable(80, { end: inH(244) })), [[TITLE, 'work: Fable at 80% this week — running low']], 'the next week');
+  assert.deepEqual(c.feed(fable(100, { end: inH(244) })), [['work: Fable limit reached', 'Resets Fri, Oct 9 at 16:00.']], 'its limit fires too');
+});
+
+test('models are told apart by name', () => {
+  const both = (a, b) => state([modelRow(a, { more: [{ name: 'Opus', pct: b, resetsAt: SEVEN_END }] })]);
+  const { feed } = notifier();
+  feed(both(20, 20));
+  assert.deepEqual(feed(both(80, 20)), [[TITLE, 'work: Fable at 80% this week — running low']]);
+  assert.deepEqual(feed(both(80, 81)), [[TITLE, 'work: Opus at 81% this week — running low']]);
+  assert.deepEqual(feed(both(10, 81)), [], 'Fable reset, Opus stays armed off');
+  assert.deepEqual(feed(both(10, 95), both(10, 96)), [[TITLE, 'work: Opus at 95% this week — almost out']]);
+
+  // A window that turns up later is first taken as seen.
+  const later = notifier();
+  later.feed(alice(10, 10));
+  assert.deepEqual(later.feed(fable(95)), [], 'first reading of a new model');
+  assert.deepEqual(later.feed(fable(100)), [['work: Fable limit reached', 'Resets Fri, Oct 2 at 16:00.']]);
+
+  // A window without a name, and a name that is no key of Object
+  const odd = notifier();
+  const named = (pct, name) => state([acct(1, 10, 10, { alias: 'work', usage: { sevenDay: { pct: 10, resetsAt: SEVEN_END }, scoped: [{ name, pct, resetsAt: SEVEN_END }] } })]);
+  odd.feed(named(10, undefined));
+  assert.deepEqual(odd.feed(named(80, undefined)), [[TITLE, 'work: ? at 80% this week — running low']]);
+  odd.feed(named(10, '__proto__'));
+  assert.deepEqual(odd.feed(named(80, '__proto__')), [[TITLE, 'work: __proto__ at 80% this week — running low']]);
+
+  // Two windows under one name read once, the fuller one: they must not re-arm each other.
+  const twice = notifier();
+  const dup = (a, b) => state([acct(1, 10, 10, { alias: 'work', usage: { sevenDay: { pct: 10, resetsAt: SEVEN_END }, scoped: [{ name: 'Fable', pct: a, resetsAt: SEVEN_END }, { name: 'Fable', pct: b, resetsAt: SEVEN_END }] } })]);
+  twice.feed(dup(20, 5));
+  assert.deepEqual(twice.feed(dup(80, 5)), [[TITLE, 'work: Fable at 80% this week — running low']]);
+  assert.deepEqual(twice.feed(dup(80, 5), dup(5, 80)), [], 'once, whichever comes first');
+});
+
+test('a change of active account seeds its models', () => {
+  const rows = (a, b) => [modelRow(a), { ...modelRow(b), number: 2, email: 'bob@example.com', organizationUuid: 'org-2', alias: undefined }];
+  const { feed } = notifier();
+  feed(state(rows(20, 95), 1));
+  assert.deepEqual(feed(state(rows(20, 95), 2)), [], 'switch to bob at 95 %');
+  assert.deepEqual(feed(state(rows(20, 99), 2)), [], 'danger was seen');
+  assert.deepEqual(feed(state(rows(20, 100), 2)), [['bob@example.com: Fable limit reached', 'Resets Fri, Oct 2 at 16:00.']]);
+  assert.deepEqual(feed(state(rows(95, 100), 1)), [], 'back to alice at 95 %: seen');
+  assert.deepEqual(feed(state(rows(100, 100), 1)), [['work: Fable limit reached', 'Resets Fri, Oct 2 at 16:00.']]);
+  // Other accounts' models say nothing, whatever they do.
+  const other = notifier();
+  other.feed(state(rows(20, 20), 1));
+  assert.deepEqual(other.feed(state(rows(20, 80), 1), state(rows(20, 100), 1)), []);
+});
+
+test('stale, doubtful and rolled-over model readings neither fire nor re-arm', () => {
+  const { feed } = notifier();
+  feed(fable(50));
+  feed(fable(80));
+  // Last-good data
+  const stale = (pct) => state([acct(1, 0, 0, { alias: 'work', usage: null, usageStatus: 'token_expired', lastGoodUsage: { scoped: [{ name: 'Fable', pct, resetsAt: SEVEN_END }] } })]);
+  assert.deepEqual(feed(stale(99)), [], 'stale 99 %');
+  assert.deepEqual(feed(stale(5)), [], 'stale 5 % re-arms nothing…');
+  assert.deepEqual(feed(fable(81)), [], '…so warn does not fire again');
+  // A failed refresh: the list is older than it looks
+  assert.deepEqual(feed({ ...fable(99), error: { kind: 'timeout', message: 'x' } }), [], 'doubtful 99 %');
+  assert.deepEqual(feed({ ...fable(5), error: { kind: 'timeout', message: 'x' } }), [], 'doubtful 5 %');
+  assert.deepEqual(feed(fable(82)), []);
+
+  // Unseeded by stale data at launch: the first real reading is seeded instead.
+  const c = notifier();
+  assert.deepEqual(c.feed(stale(40), stale(40)), []);
+  assert.deepEqual(c.feed(fable(95)), [], 'first real reading, taken as seen');
+
+  // A model window past its reset is not read.
+  const d = notifier();
+  d.feed(fable(50));
+  d.tick(100 * 3_600_000); // past SEVEN_END
+  assert.deepEqual(d.feed(fable(99)), [], 'rolled over');
+  assert.deepEqual(d.feed(fable(5)), [], 'and it re-arms nothing');
+});
+
+test('a model at 100 % blocks neither "limit reached" nor "available again"', () => {
+  // 100 % on the model only: no "limit reached" for the account.
+  const a = notifier();
+  a.feed(fable(50, { five: 50, seven: 50 }));
+  const kinds = (s) => a.n.update(s).map((x) => x.kind);
+  assert.deepEqual(kinds(fable(100, { five: 50, seven: 50 })), ['model']);
+  assert.equal(a.n.account.blocked, false);
+  // The session still reaches its own limit, with Fable at 100 %.
+  assert.deepEqual(kinds(fable(100, { five: 100, seven: 50 })), ['reached']);
+  // And the account is available again while Fable stays at 100 %.
+  assert.deepEqual(a.feed(fable(100, { five: 4, seven: 50 })), [[TITLE, 'work is available again']]);
+
+  // "All accounts" counts the windows of the accounts only, and leaves the model's note alone.
+  const rows = (a1, f1) => [modelRow(f1, { five: a1 }), acct(2, 100, 10)];
+  const b = notifier();
+  b.feed(state(rows(50, 50)));
+  assert.deepEqual(b.n.update(state(rows(50, 100))).map((x) => x.kind), ['model'], 'the model at 100 % is not the account at 100 %');
+  const c = notifier();
+  c.feed(state(rows(50, 50)));
+  assert.deepEqual(c.n.update(state(rows(100, 100))).map((x) => x.kind), ['model', 'exhausted'], '"limit reached" gives way, the model stays');
+});
+
+test('the model texts in every language: kind "model" for all three', () => {
+  const want = {
+    ru: ['work: Fable 80% за неделю — лимит подходит к концу', 'work: Fable 95% за неделю — лимит почти исчерпан', 'work: лимит Fable исчерпан', 'Обновится пт, 2 окт. в 16:00.'],
+    uk: ['work: Fable 80% за тиждень — ліміт закінчується', 'work: Fable 95% за тиждень — ліміт майже вичерпано', 'work: ліміт Fable вичерпано', 'Оновиться пт, 2 жовт. о 16:00.'],
+    de: ['work: Fable bei 80 % diese Woche – wird knapp', 'work: Fable bei 95 % diese Woche – fast aufgebraucht', 'work: Fable-Limit erreicht', 'Reset am Fr., 2. Okt. um 16:00.'],
+  };
+  for (const [lang, [warn, danger, reached, body]] of Object.entries(want)) {
+    const { n } = notifier({ t: I18n.translator(lang), formatting: () => ({ locale: I18n.LOCALES[lang], hour12: false }) });
+    n.update(fable(20));
+    const title = I18n.STRINGS[lang]['app.title'];
+    assert.deepEqual(n.update(fable(80)).map((x) => [x.kind, x.title, x.body]), [['model', title, warn]], lang);
+    assert.deepEqual(n.update(fable(95)).map((x) => [x.kind, x.title, x.body]), [['model', title, danger]], lang);
+    const [limit] = n.update(fable(100)).map((x) => [x.kind, x.title, x.body.replace(/\s/g, ' ')]);
+    assert.deepEqual(limit, ['model', reached, body], lang);
+  }
+});
+
+// ── logins that lapse soon ──────────────────────────────────────────────────
+
+const loginAt = (h) => new Date(NOW + h * 3_600_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+const withLogin = (n, h, extra = {}) => acct(n, 10, 10, { loginExpiresAt: loginAt(h), ...extra });
+const BOB_BODY = 'Log in to this account again in Claude Code, then run: cswap add --slot 2';
+
+test('a login inside the 3 days is told at launch, once, for each account', () => {
+  const { n, feed } = notifier();
+  const s = state([withLogin(1, 400), withLogin(2, 60), withLogin(3, 10)]);
+  const notes = n.update(s);
+  assert.deepEqual(notes.map((x) => [x.kind, x.key, x.title, x.body]), [
+    ['login', 'bob@example.com\norg-2', 'bob@example.com: login expires in 2d 12h', BOB_BODY],
+    ['login', 'carol@example.com\norg-3', 'carol@example.com: login expires in 10h', 'Log in to this account again in Claude Code, then run: cswap add --slot 3'],
+  ]);
+  assert.deepEqual(feed(s, s), [], 'once');
+});
+
+test('a login is told when it comes inside the 3 days; a new date is told again', () => {
+  const { feed, tick } = notifier();
+  const s = (h) => state([withLogin(2, h)]);
+  assert.deepEqual(feed(s(80)), [], 'more than 3 days ahead');
+  tick(9 * 3_600_000);
+  assert.deepEqual(feed(s(80)), [['bob@example.com: login expires in 2d 23h', BOB_BODY]], '71 h left');
+  assert.deepEqual(feed(s(80)), [], 'once for this date');
+  // Logged in again
+  assert.deepEqual(feed(s(90)), [], '81 h left: not yet');
+  assert.deepEqual(feed(s(70)), [['bob@example.com: login expires in 2d 13h', BOB_BODY]], 'a new date');
+  assert.deepEqual(feed(s(70), s(70)), [], 'once for that one too');
+  assert.deepEqual(feed(s(80)), [], 'a date already told is not told again');
+});
+
+test('expired, disabled, or a status that already says it: no login notification', () => {
+  const { feed } = notifier();
+  assert.deepEqual(feed(state([withLogin(1, -1), withLogin(2, -48, { usageStatus: 'token_expired' })])), [], 'expired never');
+  assert.deepEqual(feed(state([withLogin(1, 0)])), [], 'expiring this very moment');
+  assert.deepEqual(feed(state([withLogin(2, 10, { disabled: true })])), [], 'disabled never');
+  assert.deepEqual(feed(state([withLogin(2, 10, { disabled: true })], 2)), [], 'also when it is the active one');
+  for (const usageStatus of ['relogin_required', 'no_credentials', 'api_key']) {
+    assert.deepEqual(feed(state([withLogin(3, 10, { usageStatus, usage: null })])), [], usageStatus);
+  }
+  assert.deepEqual(feed(state([acct(4, 10, 10)])), [], 'no date');
+  assert.deepEqual(feed(state([{ ...acct(4, 10, 10), loginExpiresAt: 'soon' }])), [], 'a date that does not parse');
+  // A disabled account comes back into the rotation: now it is told.
+  assert.deepEqual(feed(state([withLogin(2, 10)])), [['bob@example.com: login expires in 10h', BOB_BODY]]);
+});
+
+test('a login date on a stale or inactive row still counts; a doubtful list waits', () => {
+  const { feed } = notifier();
+  const stale = withLogin(2, 60, { usage: null, usageStatus: 'token_expired', lastGoodUsage: { sevenDay: { pct: 10, resetsAt: SEVEN_END } } });
+  assert.deepEqual(feed({ ...state([stale]), error: { kind: 'cli', message: 'x' } }), [], 'nothing is read from a doubtful list');
+  assert.deepEqual(feed(state([stale])), [['bob@example.com: login expires in 2d 12h', BOB_BODY]]);
+});
+
+test('with notifications off the login is noted, not shown, and not replayed', () => {
+  const { n, feed, shown } = notifier({ enabled: false });
+  const s = state([withLogin(2, 60)]);
+  assert.deepEqual(feed(s), [], 'off');
+  n.setEnabled(true);
+  assert.deepEqual(feed(s), [], 'on again: nothing old');
+  assert.equal(shown.length, 0);
+  // A new date while on speaks.
+  assert.deepEqual(feed(state([withLogin(2, 50)])), [['bob@example.com: login expires in 2d 2h', BOB_BODY]]);
+});
+
+test('the login texts in every language, with the slot it applies to', () => {
+  const want = {
+    ru: ['bob@example.com: вход истекает через 10 ч', 'Войдите в этот аккаунт заново в Claude Code, затем выполните: cswap add --slot 2'],
+    uk: ['bob@example.com: вхід спливає через 10 год', 'Увійдіть у цей акаунт знову в Claude Code, потім виконайте: cswap add --slot 2'],
+    de: ['bob@example.com: Anmeldung läuft in 10 Std. ab', 'Melde dich in Claude Code neu bei diesem Konto an und führe dann aus: cswap add --slot 2'],
+  };
+  for (const [lang, expected] of Object.entries(want)) {
+    const { feed } = notifier({ t: I18n.translator(lang) });
+    assert.deepEqual(feed(state([withLogin(2, 10)])), [expected], lang);
+  }
+  // The alias goes first, as elsewhere.
+  const { feed } = notifier();
+  assert.deepEqual(feed(state([withLogin(2, 10, { alias: 'home' })])), [['home: login expires in 10h', BOB_BODY]]);
+});
+
+test('attach: logins and models go through Notification like the rest', () => {
+  posted.length = 0;
+  const service = new EventEmitter();
+  const login = new Date(Date.now() + 10 * 3_600_000).toISOString(); // the same date every time
+  const end = new Date(Date.now() + 76 * 3_600_000).toISOString();
+  const liveRow = (pct) => ({
+    ...acct(1, 10, 10, { alias: 'work' }),
+    loginExpiresAt: login,
+    usage: { sevenDay: { pct: 10, resetsAt: end }, scoped: [{ name: 'Fable', pct, resetsAt: end }] },
+  });
+  service.state = state([liveRow(50)]);
+  const t = I18n.translator('en');
+  attach({ bus: new EventEmitter(), service, t: (k, v) => t(k, v), getSettings: () => ({ notifications: true }), showUi() {} });
+  assert.equal(posted.length, 1, 'the login at launch, not the model');
+  assert.match(posted[0].options.title, /^work: login expires in (9h 59m|10h)$/);
+  assert.equal(posted[0].options.body, 'Log in to this account again in Claude Code, then run: cswap add --slot 1');
+  service.emit('state', state([liveRow(50)]));
+  service.emit('state', state([liveRow(80)]));
+  assert.equal(posted.length, 2);
+  assert.deepEqual(posted[1].options, { title: TITLE, body: 'work: Fable at 80% this week — running low', silent: false });
+});

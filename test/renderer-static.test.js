@@ -219,6 +219,17 @@ test('9. nothing animates forever by itself: spinners loop, the bar sweep only w
   }
 });
 
+// land-glow animates a ring's filter between --arc-lift and --glow. Chromium
+// does not interpolate a drop-shadow from rgba() to color-mix(): the colour runs
+// through black and far out of range, a green flash (measured on Electron 44, 2026-11-01).
+test('10. the landing glow animates between colours of one kind', () => {
+  const tokens = read(path.join(RENDERER, 'css', 'tokens.css'));
+  const lifts = [...tokens.matchAll(/--lift(?:-weekly)?:\s*([^;]+);/g)].map((m) => m[1]);
+  assert.equal(lifts.length, 4, 'light and dark, session and week');
+  for (const lift of lifts) assert.match(lift, /^drop-shadow\(.*color-mix\(/);
+  assert.match(read(path.join(RENDERER, 'css', 'hero.css')), /--glow: color-mix\(/);
+});
+
 // The rules themselves: each catches what it is for and lets through what
 // today's code legitimately does.
 test('the rules catch violations and pass legitimate code', () => {

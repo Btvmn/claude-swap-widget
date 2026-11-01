@@ -7,10 +7,13 @@
 //                                                  tray:image ◀──┘
 //
 // kind 'picture': the active account's 5h and 7d values for a canvas style.
+// Which windows those are comes from mainWindows(): a Team seat without a week
+// has its fullest model as `seven`. With no 5-hour window (solo: true) the
+// picture shows `seven` alone, coloured by the fullest of it and the models.
 // kind 'classic': nothing to paint (setup screens, loading, no active
 // account); main draws src/tray-icon.js and trayInfo()'s title as today.
 
-const { effectiveUsage, resetPassed, WARN, CRIT } = require('./shared/usage');
+const { effectiveUsage, mainWindows, modelWindows, resetPassed, WARN, CRIT } = require('./shared/usage');
 
 // Styles the renderer paints. 'classic' is drawn by main alone.
 const PICTURE_STYLES = Object.freeze(['ring', 'bars', 'rings', 'ringsText']);
@@ -48,15 +51,30 @@ function trayModel(state, now = Date.now(), { busy = false, warn = WARN, danger 
   const active = (state.accounts || []).find((a) => a && a.active);
   if (!active) return { ...CLASSIC, reason: 'no-active' };
   const { usage, stale } = effectiveUsage(active);
+  const { shown } = mainWindows(usage);
+  const slot = (kind) => shown.find((s) => s.kind === kind);
+  const value = (w) => windowValue(w, now, warn, danger);
+  const fiveSlot = slot('5h');
+  const sevenSlot = slot('7d') || slot('model');
+  const seven = value(sevenSlot && sevenSlot.win);
+  // No key at all otherwise: a picture with a 5-hour window (or with no window
+  // at all) stays the message it always was.
+  const solo = !fiveSlot && shown.length > 0;
+  if (solo) seven.hot = worst([seven.hot, ...modelWindows(usage).map((w) => value(w).hot)]);
   return {
     kind: 'picture',
-    five: windowValue(usage && usage.fiveHour, now, warn, danger),
-    seven: windowValue(usage && usage.sevenDay, now, warn, danger),
+    five: value(fiveSlot && fiveSlot.win),
+    seven,
     // Same meaning as the classic title's "?": the last refresh failed (the
     // list is older than it looks), or only last-good data is left.
     doubtful: Boolean(state.error) || stale,
     busy: Boolean(busy) || Boolean(state.switching),
+    ...(solo ? { solo: true } : {}),
   };
+}
+
+function worst(levels) {
+  return levels.includes('danger') ? 'danger' : levels.includes('warn') ? 'warn' : null;
 }
 
 // Equal signatures draw the same picture; main redraws only on a change
@@ -64,7 +82,7 @@ function trayModel(state, now = Date.now(), { busy = false, warn = WARN, danger 
 function modelSignature(model) {
   if (!model || model.kind !== 'picture') return 'classic';
   const v = (w) => (w ? `${w.pct === null ? '-' : w.pct}${w.hot ? `/${w.hot}` : ''}` : '-');
-  return `picture|${v(model.five)}|${v(model.seven)}|${model.doubtful ? 1 : 0}|${model.busy ? 1 : 0}`;
+  return `picture|${v(model.five)}|${v(model.seven)}|${model.doubtful ? 1 : 0}|${model.busy ? 1 : 0}${model.solo ? '|solo' : ''}`;
 }
 
 // The tray:draw payload (PLAN §4.2). The thresholds travel along so the
@@ -80,6 +98,7 @@ function drawMessage(model, { seq, style, dark, warn = WARN, danger = CRIT }) {
     seven: model.seven,
     doubtful: Boolean(model.doubtful),
     busy: Boolean(model.busy),
+    ...(model.solo ? { solo: true } : {}),
   };
 }
 

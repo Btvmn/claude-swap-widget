@@ -171,7 +171,7 @@ test('input is sorted, invalid lines are skipped, samples outside the window are
   assert.equal(st.peak, 30);
 });
 
-test('peak and weekLast per bucket; a missing h is skipped, not a 0', () => {
+test('sessionPeak and weekLast per bucket; a missing h is skipped, not a 0; peak falls back to w', () => {
   const day = (h, mi) => at(2026, 9, 29, h, mi);
   const st = S.computeStats([
     sample(day(9, 0), { h: 40, w: 10 }),
@@ -179,12 +179,241 @@ test('peak and weekLast per bucket; a missing h is skipped, not a 0', () => {
     sample(day(9, 20), { h: 35, w: 12 }),
     sample(day(10, 0), { w: 13 }),
   ], 'day', NOW);
+  assert.equal(st.buckets[9].sessionPeak, 40);
   assert.equal(st.buckets[9].peak, 40);
   assert.equal(st.buckets[9].weekLast, 12);
-  assert.equal(st.buckets[10].peak, null, 'no h in the bucket');
+  assert.equal(st.buckets[10].sessionPeak, null, 'no h in the bucket');
+  assert.equal(st.buckets[10].peak, 13, 'a reading with w only: its level is w');
   assert.equal(st.buckets[10].weekLast, 13);
   assert.equal(st.buckets[10].none, false, 'it has data, just no 5h value');
   assert.equal(st.peak, 40);
+});
+
+test('a reading\'s level: the 5h, else the fullest weekly limit; nothing else is one', () => {
+  const peak = (fields) => S.computeStats([sample(at(2026, 9, 29, 9), fields)], 'day', NOW).buckets[9].peak;
+  assert.equal(peak({ h: 10, w: 99, m: { Fable: 100 } }), 10);
+  assert.equal(peak({ h: 0, w: 99 }), 0, 'an idle 5h is a 5h');
+  assert.equal(peak({ w: 71, m: { Fable: 82 } }), 82, 'the model stands above the week');
+  assert.equal(peak({ w: 95, m: { Fable: 82 } }), 95, 'the week stands above the model');
+  assert.equal(peak({ w: 0, m: { Fable: 0 } }), 0, 'a 0 % week is a week');
+  assert.equal(peak({ m: { Fable: 82, Opus: 90, Haiku: 3 } }), 90);
+  assert.equal(peak({ m: { Fable: 0 } }), 0);
+  for (const none of [{}, { u: 5, l: 50 }, { m: {} }, { m: { Fable: 'x', Opus: null } }, { m: 'x' }, { h: '5', w: null }, { h: NaN, w: Infinity }]) {
+    assert.equal(peak(none), null, JSON.stringify(none));
+  }
+});
+
+test('with an h in every reading the figures are the 5h ones, whatever else the readings carry', () => {
+  const day = (h, mi) => at(2026, 9, 29, h, mi);
+  const plain = [[9, 0, 20], [9, 10, 91], [9, 20, 95], [10, 5, 30], [10, 15, 30], [14, 0, 0]].map(([h, mi, v]) => sample(day(h, mi), { h: v }));
+  const rich = plain.map((e) => ({ ...e, w: 97, m: { Fable: 100 } }));
+  const a = S.computeStats(plain, 'day', NOW);
+  const b = S.computeStats(rich, 'day', NOW);
+  for (const k of ['peak', 'avg', 'nearMs', 'inUseMs', 'observedMs', 'hasSession']) assert.equal(b[k], a[k], k);
+  assert.equal(b.busiest.start, a.busiest.start);
+  assert.equal(b.peak, 95);
+  b.buckets.forEach((x, i) => {
+    for (const k of ['peak', 'sessionPeak', 'avg', 'nearMs', 'peakWindow']) assert.equal(x[k], a.buckets[i][k], `${k} of bucket ${i}`);
+    assert.equal(x.sessionPeak, x.peak);
+    assert.equal(x.peakWindow, null);
+  });
+});
+
+test('no 5-hour window: peak, average, near limit and busiest read the fullest weekly limit', () => {
+  const day = (h, mi) => at(2026, 9, 29, h, mi);
+  const st = S.computeStats([
+    sample(day(9, 0), { w: 88, m: { Fable: 20 } }),
+    sample(day(9, 10), { w: 90, m: { Fable: 21 } }),
+    sample(day(9, 20), { w: 92, m: { Fable: 22 } }),
+    sample(day(12, 0), { w: 92, m: { Fable: 22 } }), // after a gap, the same peak
+    sample(day(12, 10), { w: 92, m: { Fable: 22 } }),
+  ], 'day', NOW);
+  assert.equal(st.peak, 92, 'the week, which stands above Fable here');
+  assert.equal(st.avg, (88 * 10 + 90 * 10 + 92 * 10) / 30);
+  assert.equal(st.buckets[9].avg, 89);
+  assert.equal(st.buckets[12].avg, 92);
+  assert.equal(st.nearMs, 20 * MIN, '90 % for 10 min and 92 % for 10 min');
+  assert.equal(st.buckets[9].nearMs, 10 * MIN);
+  assert.equal(st.buckets[12].nearMs, 10 * MIN);
+  assert.equal(st.busiest.start, day(9, 0), 'the same peak: the bucket with more time in use');
+  assert.equal(st.inUseMs, 20 * MIN);
+  assert.equal(st.observedMs, 30 * MIN);
+  assert.equal(st.hasSession, false);
+  // A lone reading counts as its own value here too.
+  const lone = S.computeStats([sample(day(9, 0), { w: 42 })], 'day', NOW);
+  assert.equal(lone.avg, 42);
+  assert.equal(lone.buckets[9].avg, 42);
+});
+
+test('only model windows: the fullest one at each reading is the level', () => {
+  const day = (h, mi) => at(2026, 9, 29, h, mi);
+  const st = S.computeStats([
+    sample(day(9, 0), { m: { Fable: 92, Opus: 10 } }),
+    sample(day(9, 10), { m: { Fable: 50, Opus: 60 } }),
+    sample(day(9, 20), { m: { Fable: 50, Opus: 60 } }),
+  ], 'day', NOW);
+  assert.equal(st.peak, 92);
+  assert.equal(st.avg, (92 * 10 + 60 * 10) / 20);
+  assert.equal(st.nearMs, 10 * MIN);
+  assert.equal(st.busiest.start, day(9, 0));
+  assert.equal(st.buckets[9].sessionPeak, null);
+  assert.equal(st.buckets[9].peakWindow, 'Fable');
+  assert.equal(st.buckets[9].weekLast, null);
+});
+
+test('the pair from before the window holds that reading\'s level', () => {
+  const before = at(2026, 9, 28, 23, 55);
+  const inside = at(2026, 9, 29, 0, 5);
+  const st = S.computeStats([sample(before, { w: 95 }), sample(inside, { w: 50 })], 'day', NOW);
+  assert.equal(st.peak, 50, 'the reading before the window is no peak of it');
+  assert.equal(st.nearMs, 5 * MIN);
+  assert.equal(st.buckets[0].avg, 95);
+});
+
+test('a model above the week is the level: the cards agree with the chart, and the bucket names it', () => {
+  const day = (h, mi) => at(2026, 9, 29, h, mi);
+  const st = S.computeStats([
+    sample(day(9, 0), { w: 70, m: { Fable: 88, Opus: 10 } }),
+    sample(day(9, 10), { w: 71, m: { Fable: 90, Opus: 10 } }),
+    sample(day(9, 20), { w: 95, m: { Fable: 90, Opus: 10 } }), // the week passes it
+    sample(day(9, 30), { w: 95, m: { Fable: 90, Opus: 10 } }),
+  ], 'day', NOW);
+  assert.equal(st.peak, 95);
+  assert.equal(st.buckets[9].peak, 95);
+  assert.equal(st.buckets[9].peakWindow, '7d');
+  assert.equal(st.avg, (88 * 10 + 90 * 10 + 95 * 10) / 30);
+  assert.equal(st.nearMs, 20 * MIN, 'Fable at 90 % for 10 min, then the week at 95 % for 10 min');
+  const fable = S.computeStats([sample(day(9, 0), { w: 71, m: { Fable: 82 } })], 'day', NOW);
+  assert.deepEqual([fable.peak, fable.buckets[9].peak, fable.buckets[9].peakWindow], [82, 82, 'Fable']);
+  const tie = S.computeStats([sample(day(9, 0), { w: 82, m: { Fable: 82 } })], 'day', NOW);
+  assert.equal(tie.buckets[9].peakWindow, '7d', 'the week wins a tie');
+});
+
+test('sessionPeak is the strict 5h peak; peakWindow names a bucket\'s peak when it is not one', () => {
+  const bucket = (...fields) => S.computeStats(fields.map((f, i) => sample(at(2026, 9, 29, 9, i), f)), 'day', NOW).buckets[9];
+  const read = (b) => [b.peak, b.sessionPeak, b.peakWindow];
+  assert.deepEqual(read(S.computeStats([], 'day', NOW).buckets[9]), [null, null, null], 'nothing measured');
+  assert.deepEqual(read(bucket({ u: 3 })), [null, null, null], 'a reading with no level');
+  assert.deepEqual(read(bucket({ h: 40 }, { h: 35 })), [40, 40, null]);
+  assert.deepEqual(read(bucket({ h: 0 })), [0, 0, null], 'an idle 5h is a session peak of 0');
+  assert.deepEqual(read(bucket({ w: 71 }, { w: 72 })), [72, null, '7d']);
+  assert.deepEqual(read(bucket({ w: 0 })), [0, null, '7d'], 'a week at 0 % is still a week value');
+  assert.deepEqual(read(bucket({ m: { Fable: 82 } })), [82, null, 'Fable'], 'so is a model window');
+  // A bucket that mixes both: what the bar shows decides.
+  assert.deepEqual(read(bucket({ h: 40, w: 10 }, { w: 11 })), [40, 40, null], 'the 5h is higher');
+  assert.deepEqual(read(bucket({ h: 20, w: 50 }, { w: 55 })), [55, 20, '7d'], 'the week is higher: never read as a session peak');
+  assert.deepEqual(read(bucket({ h: 20 }, { w: 30, m: { Fable: 55 } })), [55, 20, 'Fable'], 'a model is higher');
+  assert.deepEqual(read(bucket({ h: 55 }, { w: 55 })), [55, 55, null], 'a tie is the session peak');
+  assert.deepEqual(read(bucket({ w: 55 }, { h: 55 })), [55, 55, null], 'in either order');
+});
+
+test('modelLast: where each model stood at the end of the bucket, own names only', () => {
+  const day = (h, mi) => at(2026, 9, 29, h, mi);
+  const st = S.computeStats([
+    sample(day(9, 0), { h: 1, m: { Fable: 15, Opus: 40 } }),
+    sample(day(9, 30), { h: 1, m: { Fable: 12 } }), // the last one, not the highest; Opus is not in it: its 40 stands
+    sample(day(10, 0), { h: 1 }),
+    sample(day(11, 0), { h: 1, m: { Fable: 'x', Opus: null } }),
+  ], 'day', NOW);
+  assert.deepEqual(st.buckets[9].modelLast, { Fable: 12, Opus: 40 });
+  assert.equal(st.buckets[8].modelLast, null, 'nothing measured');
+  assert.equal(st.buckets[10].modelLast, null, 'no models in the reading');
+  assert.equal(st.buckets[11].modelLast, null, 'no numbers in them');
+
+  // JSON.parse makes `__proto__` an own property: it must not count, or end up as a prototype.
+  const inherited = Object.create({ Ghost: 99 });
+  inherited.Fable = 2;
+  const edited = S.computeStats([
+    sample(day(9, 0), { m: JSON.parse('{"__proto__": 99, "constructor": 7, "Fable": 1}') }),
+    sample(day(10, 0), { m: inherited }),
+  ], 'day', NOW);
+  const last = edited.buckets[9].modelLast;
+  assert.deepEqual(Object.keys(last).sort(), ['Fable', 'constructor']);
+  assert.equal(Object.getPrototypeOf(last), Object.prototype);
+  assert.equal(edited.buckets[9].peak, 7);
+  assert.deepEqual(edited.buckets[10].modelLast, { Fable: 2 }, 'an inherited name is not a window');
+  assert.equal(edited.buckets[10].peak, 2);
+  assert.equal(edited.topModel, 'constructor');
+});
+
+test('allSession: no reading in the window stands in for a 5h', () => {
+  const day = (h, mi) => at(2026, 9, 29, h, mi);
+  const all = (...fields) => S.computeStats(fields.map((f, i) => sample(day(9, i), f)), 'day', NOW).allSession;
+  assert.equal(all(), true, 'nothing measured');
+  assert.equal(all({ h: 20 }, { h: 0, w: 50 }), true);
+  assert.equal(all({ h: 20 }, { u: 3 }), true, 'a reading with no level stands in for nothing');
+  assert.equal(all({ h: 20 }, { w: 50 }), false, 'a mixed period');
+  assert.equal(all({ w: 50 }), false);
+  assert.equal(all({ m: { Fable: 50 } }), false);
+});
+
+test('hasSession and topModel read the window only', () => {
+  const day = (h, mi) => at(2026, 9, 29, h, mi);
+  const yesterday = at(2026, 9, 28, 12);
+  const empty = S.computeStats([], 'day', NOW);
+  assert.deepEqual([empty.hasSession, empty.topModel], [false, null]);
+  assert.equal(S.computeStats([sample(day(9, 0), { h: 0 })], 'day', NOW).hasSession, true, 'an idle 5h is a session');
+  assert.equal(S.computeStats([sample(day(9, 0), { w: 5 })], 'day', NOW).hasSession, false);
+
+  // A reading from before the window opens the first pair, nothing more.
+  const old = [sample(yesterday, { h: 50, m: { Fable: 9 } }), sample(day(9, 0), { w: 5 })];
+  const today = S.computeStats(old, 'day', NOW);
+  assert.deepEqual([today.hasSession, today.topModel], [false, null]);
+  const week = S.computeStats(old, 'week', NOW);
+  assert.deepEqual([week.hasSession, week.topModel], [true, 'Fable']);
+
+  // The highest latest reading, not the highest ever: Opus reset and is low now.
+  const top = (...ms) => S.computeStats(ms.map((m, i) => sample(day(9, i), { m })), 'day', NOW).topModel;
+  assert.equal(top({ Opus: 90, Fable: 50 }, { Opus: 10 }), 'Fable');
+  assert.equal(top({ Fable: 50 }, { Fable: 60, Opus: 55 }), 'Fable');
+  assert.equal(top({ Opus: 55 }, { Fable: 80 }), 'Fable');
+  assert.equal(top({ Opus: 70, Fable: 70 }), 'Opus', 'a tie keeps the one seen first');
+  assert.equal(top({ Fable: 0 }), 'Fable', 'a model at 0 % is a model');
+  assert.equal(top({ Fable: 'x' }), null);
+});
+
+test('a mixed week: older days with h, recent days without', () => {
+  const st = S.computeStats([
+    sample(at(2026, 9, 24, 10), { h: 60, w: 30, m: { Fable: 20 } }),
+    sample(at(2026, 9, 25, 10), { h: 80, w: 35, m: { Fable: 25 } }),
+    sample(at(2026, 9, 26, 10), { h: 40, w: 90 }), // the bars stay on the 5h while there is one
+    // Anthropic took the 5-hour window away:
+    sample(at(2026, 9, 27, 10), { w: 70, m: { Fable: 75 } }),
+    sample(at(2026, 9, 29, 10), { w: 72, m: { Fable: 77 } }),
+  ], 'week', NOW);
+  const b = st.buckets; // 23 … 29 September
+  assert.deepEqual(b.map((x) => x.sessionPeak), [null, 60, 80, 40, null, null, null]);
+  assert.deepEqual(b.map((x) => x.peak), [null, 60, 80, 40, 75, null, 77]);
+  assert.deepEqual(b.map((x) => x.peakWindow), [null, null, null, null, 'Fable', null, 'Fable']);
+  assert.deepEqual(b.map((x) => x.weekLast), [null, 30, 35, 90, 70, null, 72]);
+  assert.deepEqual(b.map((x) => x.modelLast && x.modelLast.Fable), [null, 20, 25, null, 75, null, 77]);
+  assert.equal(st.peak, 80);
+  assert.equal(st.busiest.start, at(2026, 9, 25));
+  assert.equal(st.hasSession, true, 'the session line stays, up to the last day that has one');
+  assert.equal(st.topModel, 'Fable');
+
+  // The same history, Today: nothing but the fallback in it.
+  const today = S.computeStats(st.samples, 'day', NOW);
+  assert.equal(today.hasSession, false);
+  assert.equal(today.peak, 77);
+  assert.equal(today.buckets[10].peakWindow, 'Fable');
+});
+
+test('a mixed day: the average weighs each reading\'s level by the time it held, near limit too', () => {
+  const day = (h, mi) => at(2026, 9, 29, h, mi);
+  const st = S.computeStats([
+    sample(day(9, 0), { h: 20, w: 95 }),
+    sample(day(9, 10), { h: 20, w: 95 }),
+    sample(day(9, 20), { w: 95, m: { Fable: 1 } }), // no 5h from here on
+    sample(day(9, 30), { w: 95, m: { Fable: 1 } }),
+    sample(day(9, 40), { m: { Fable: 60 } }), // and no week
+    sample(day(9, 50), { m: { Fable: 60 } }),
+  ], 'day', NOW);
+  assert.equal(st.avg, (20 * 20 + 95 * 20 + 60 * 10) / 50);
+  assert.equal(st.nearMs, 20 * MIN, 'the 20 minutes held at the week\'s 95 %');
+  assert.equal(st.peak, 95);
+  assert.equal(st.buckets[9].sessionPeak, 20);
+  assert.equal(st.hasSession, true);
 });
 
 test('average is time-weighted over observed pairs, not a plain sample mean', () => {
@@ -414,6 +643,18 @@ test('thinSamples folds into at most maxPoints bins: 5h peak, last 7d, last spen
   const g = S.thinSamples(gappy, 100);
   const gaps = g.slice(1).map((e, i) => (e.t - g[i].t) * 1000);
   assert.ok(Math.max(...gaps) >= 10 * HOUR - 500 * 30 * 1000);
+});
+
+test('thinSamples with no h: none is made up, the week and the models survive the folding', () => {
+  const t0 = at(2026, 9, 29, 0);
+  const many = Array.from({ length: 2000 }, (_, i) => sample(t0 + i * 30 * 1000, { w: i / 100, m: { Fable: i / 50 } }));
+  const out = S.thinSamples(many, 720);
+  assert.ok(out.length <= 720, `${out.length} points`);
+  assert.ok(out.every((e) => !('h' in e) && e.w !== undefined && e.m.Fable !== undefined));
+  assert.equal(out[out.length - 1].m.Fable, 1999 / 50);
+  assert.equal(out[out.length - 1].w, 1999 / 100);
+  const st = S.computeStats(out, 'day', NOW);
+  assert.deepEqual([st.hasSession, st.topModel], [false, 'Fable']);
 });
 
 test('bucketLabel: hours by the 12/24 h choice, weekdays capitalised, dates in the locale', () => {

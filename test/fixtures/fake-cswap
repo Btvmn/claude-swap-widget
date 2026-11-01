@@ -27,6 +27,8 @@
 //                          activeAccountNumber null, no row active, status `active: null`;
 //                          strategy switches are the `unmanaged-account` no-op, a direct
 //                          switch reports `from: {number: null, …}`)
+//                        | ultra (a roster of its own, see ULTRA: accounts without a 5-hour
+//                          window, a Team seat without a week, and logins about to lapse)
 //   FAKE_CSWAP_STATE     file that remembers the active account and the disabled
 //                        ones (switch, disable and enable persist), and the clocks of
 //                        default and drift
@@ -118,6 +120,65 @@ const ACCOUNTS = [
   { number: 5, email: 'erin@example.com', ...personal('erin@example.com'), disabled: true, usage: usage(5, 12, {}, 120) },
 ];
 
+// A weekly window with its pace fields: the week, or a model when it has a name.
+function weekly(pct, weekH, name) {
+  const { sevenDay } = usage(0, pct, {}, weekH);
+  return name ? { ...sevenDay, name } : sevenDay;
+}
+
+// A login's expiry stays put until the next /login, while every call of this
+// fake is a new process: the offsets count from the current 6 h block, so the
+// date is the same between refreshes (the notifier tells once per date). That
+// makes them up to 6 h shorter than written, which never leaves their range.
+const LOGIN_BLOCK_MS = 6 * 3_600_000;
+const loginAt = (h) => iso(now - (now % LOGIN_BLOCK_MS) + h * 3_600_000);
+
+// cswap's shape for accounts with no 5-hour window: `usage` has no fiveHour
+// key at all. A Team seat (claude-swap #476) has fiveHour, no sevenDay, only
+// scoped. cswap does not say which plan any of these is on.
+const ULTRA = [
+  {
+    number: 1,
+    email: 'alice@example.com',
+    alias: 'work',
+    organizationName: 'Acme Corp',
+    organizationUuid: 'org-acme',
+    usage: { sevenDay: weekly(71, 30), scoped: [weekly(82, 30, 'Fable')] },
+    loginExpiresAt: loginAt(16 * 24),
+  },
+  {
+    number: 2,
+    email: 'bob@example.com',
+    ...personal('bob@example.com'),
+    usage: { fiveHour: usageWindow(3, inH(2.2)), sevenDay: weekly(85, 40), scoped: [weekly(34, 40, 'Fable')] },
+    loginExpiresAt: loginAt(60), // the amber pill
+  },
+  {
+    number: 3,
+    email: 'carol@example.com',
+    organizationName: 'Globex',
+    organizationUuid: 'org-globex',
+    usage: { sevenDay: weekly(12, 120) },
+  },
+  {
+    number: 4,
+    email: 'dave@example.com',
+    ...personal('dave@example.com'),
+    usageStatus: 'relogin_required',
+    lastGoodUsage: { sevenDay: weekly(33, 76), scoped: [weekly(12, 76, 'Fable')] },
+    lastGoodAgeSeconds: 216_000,
+    loginExpiresAt: loginAt(-48),
+  },
+  {
+    number: 5,
+    email: 'erin@example.com',
+    organizationName: 'Initech',
+    organizationUuid: 'org-initech',
+    usage: { fiveHour: usageWindow(41, inH(2.2)), scoped: [weekly(0, 90, 'Fable')] },
+    loginExpiresAt: loginAt(10), // the red pill
+  },
+];
+
 // State: { active, disabled: [numbers], drift? }. Without a `disabled` key the
 // roster's own flags apply (erin), so older state files keep working.
 function readRaw() {
@@ -199,6 +260,7 @@ function row(a, active) {
   };
   if (a.alias) r.alias = a.alias;
   if (a.disabled) r.disabled = true;
+  if (a.loginExpiresAt) r.loginExpiresAt = a.loginExpiresAt;
   const clock = a.clock ?? now; // when cswap measured: drift and default keep their own clock
   if (r.usage) {
     const age = a.usageAgeSeconds ?? 30.1;
@@ -303,6 +365,7 @@ function main(argv) {
   else if (scenario === 'empty') roster = [];
   else if (scenario === 'rolled') roster = ACCOUNTS.map((a) => (a.number === 1 ? { ...a, usage: rolledOver(a.usage) } : a));
   else if (scenario === 'single') roster = ACCOUNTS.filter((a) => a.number === 1);
+  else if (scenario === 'ultra') roster = ULTRA;
   else if (drift) roster = ACCOUNTS.map((a) => drifted(a, drift));
   const accounts = state.disabled ? roster.map((a) => ({ ...a, disabled: state.disabled.includes(a.number) })) : roster;
   // single: a remembered slot that is not in the roster falls back to alice.

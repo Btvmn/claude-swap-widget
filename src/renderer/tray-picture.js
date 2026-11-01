@@ -13,10 +13,14 @@
 // the value that crossed it is drawn in colour for the menu-bar appearance
 // and everything else in plain white or black.
 //
+// An account with no 5-hour window comes with solo: true: one value (`seven`)
+// on one ring or bar, with its digits at the big size, no dot and no second
+// number.
+//
 // Protocol: main sends tray:draw {seq, style, dark, warn, danger, five, seven,
-// doubtful, busy}; every message is answered with tray:image (seq, dataUrl,
-// template), even when the PNG did not change, because main treats a missing
-// answer as "renderer gone" and falls back to the classic ring after 1 s.
+// doubtful, busy, solo?}; every message is answered with tray:image (seq,
+// dataUrl, template), even when the PNG did not change, because main treats a
+// missing answer as "renderer gone" and falls back to the classic ring after 1 s.
 // Dormant while window.api has no onTrayDraw.
 (function () {
   'use strict';
@@ -136,11 +140,12 @@
   }
 
   // o: { style, session, week (0…100 or null), sessionLevel, weekLevel
-  //      ('warn' | 'danger' | null), refreshing, doubtful, template, ink, accents }
+  //      ('warn' | 'danger' | null), refreshing, doubtful, solo, template, ink, accents }
   // Returns the canvas width in px.
   function drawTrayPicture(canvas, o) {
     const ctx = canvas.getContext('2d');
     const style = STYLES.includes(o.style) ? o.style : 'ring';
+    const solo = o.solo === true;
     const value = (v) => (finite(v) ? Math.round(Math.min(Math.max(v, 0), 100)) : null);
     const session = value(o.session);
     const week = value(o.week);
@@ -161,11 +166,13 @@
     const markWidth = ctx.measureText(MARK).width;
     ctx.font = SMALL_FONT;
     const smallCell = digitCell(ctx);
-    const stackWidth = Math.max(sText.length, wText.length) * smallCell;
+    const stackWidth = solo ? wText.length * bigCell : Math.max(sText.length, wText.length) * smallCell;
     const stackX = style === 'bars' ? 41 : 39;
     const stackMarkX = stackX + stackWidth + 4;
     const ringWidth = (s) =>
-      s.lead + (sText.length + wText.length) * bigCell + s.gap * 2 + dotWidth + (mark ? s.markGap + markWidth : 0) + s.pad;
+      solo
+        ? s.lead + wText.length * bigCell + (mark ? s.markGap + markWidth : 0) + s.pad
+        : s.lead + (sText.length + wText.length) * bigCell + s.gap * 2 + dotWidth + (mark ? s.markGap + markWidth : 0) + s.pad;
     let space = SPACING.normal;
     let width;
     if (style === 'rings') width = 32;
@@ -184,12 +191,18 @@
     if (width > MAX_WIDTH) ctx.setTransform(MAX_WIDTH / width, 0, 0, 1, 0, 0);
 
     const stacked = () => {
-      ctx.font = SMALL_FONT;
       ctx.globalAlpha = numbersAlpha;
-      ctx.fillStyle = sColour;
-      drawDigits(ctx, sText, stackX, 10.5, smallCell);
-      ctx.fillStyle = wColour;
-      drawDigits(ctx, wText, stackX, 26.5, smallCell);
+      if (solo) {
+        ctx.font = BIG_FONT;
+        ctx.fillStyle = wColour;
+        drawDigits(ctx, wText, stackX, 18, bigCell);
+      } else {
+        ctx.font = SMALL_FONT;
+        ctx.fillStyle = sColour;
+        drawDigits(ctx, sText, stackX, 10.5, smallCell);
+        ctx.fillStyle = wColour;
+        drawDigits(ctx, wText, stackX, 26.5, smallCell);
+      }
       if (mark) {
         // One big "?" beside both lines: the doubt covers both numbers
         ctx.font = BIG_FONT;
@@ -200,24 +213,35 @@
     };
 
     if (style === 'bars') {
-      trayBar(ctx, 2, 10.5, 34, share(session), sColour, o.ink, o.refreshing ? [0.22, 0.5] : null);
-      trayBar(ctx, 2, 26.5, 34, share(week), wColour, o.ink, o.refreshing ? [0.52, 0.8] : null);
+      if (solo) {
+        trayBar(ctx, 2, 18, 34, share(week), wColour, o.ink, o.refreshing ? [0.36, 0.64] : null);
+      } else {
+        trayBar(ctx, 2, 10.5, 34, share(session), sColour, o.ink, o.refreshing ? [0.22, 0.5] : null);
+        trayBar(ctx, 2, 26.5, 34, share(week), wColour, o.ink, o.refreshing ? [0.52, 0.8] : null);
+      }
       stacked();
     } else if (style === 'rings' || style === 'ringsText') {
-      trayRing(ctx, 16, 18, 13, 3.4, share(session), sColour, o.ink, o.refreshing ? 0.36 : undefined);
-      trayRing(ctx, 16, 18, 6.6, 3.4, share(week), wColour, o.ink, o.refreshing ? 0.86 : undefined);
+      if (solo) {
+        trayRing(ctx, 16, 18, 13, 3.4, share(week), wColour, o.ink, o.refreshing ? 0.36 : undefined);
+      } else {
+        trayRing(ctx, 16, 18, 13, 3.4, share(session), sColour, o.ink, o.refreshing ? 0.36 : undefined);
+        trayRing(ctx, 16, 18, 6.6, 3.4, share(week), wColour, o.ink, o.refreshing ? 0.86 : undefined);
+      }
       if (style === 'ringsText') stacked();
     } else {
-      trayRing(ctx, 15, 18, 11.5, 3.6, share(session), sColour, o.ink, o.refreshing ? 0.36 : undefined);
+      trayRing(ctx, 15, 18, 11.5, 3.6, share(solo ? week : session), solo ? wColour : sColour, o.ink, o.refreshing ? 0.36 : undefined);
       ctx.font = BIG_FONT;
       const baseline = digitBaseline(ctx, 18);
-      ctx.globalAlpha = numbersAlpha;
-      ctx.fillStyle = sColour;
-      let x = drawDigits(ctx, sText, space.lead, 18, bigCell) + space.gap;
-      ctx.globalAlpha = 0.5 * numbersAlpha;
-      ctx.fillStyle = o.ink;
-      ctx.fillText('·', x, baseline);
-      x += dotWidth + space.gap;
+      let x = space.lead;
+      if (!solo) {
+        ctx.globalAlpha = numbersAlpha;
+        ctx.fillStyle = sColour;
+        x = drawDigits(ctx, sText, x, 18, bigCell) + space.gap;
+        ctx.globalAlpha = 0.5 * numbersAlpha;
+        ctx.fillStyle = o.ink;
+        ctx.fillText('·', x, baseline);
+        x += dotWidth + space.gap;
+      }
       ctx.globalAlpha = numbersAlpha;
       ctx.fillStyle = wColour;
       x = drawDigits(ctx, wText, x, 18, bigCell);
@@ -255,6 +279,7 @@
       weekLevel: seven.hot,
       refreshing: m.busy === true,
       doubtful: m.doubtful === true,
+      solo: m.solo === true,
       template,
       ink: template || !dark ? '#000000' : '#ffffff',
       accents: ACCENTS[dark ? 'dark' : 'light'],

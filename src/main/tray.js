@@ -73,15 +73,16 @@ function getTray() {
   return tray;
 }
 
-// When the active account's 5h or 7d window rolls over, what the menu bar
-// shows (and what the notifier knows) is outdated at that moment, not at the
-// next refresh: re-run everything that listens to the state then.
+// When the active account's 5h, 7d or per-model window rolls over, what the
+// menu bar shows (and what the notifier knows) is outdated at that moment, not
+// at the next refresh: re-run everything that listens to the state then.
 let resetTimer = null;
 function scheduleReset(state, now) {
   clearTimeout(resetTimer);
   const active = state && state.phase === 'ok' ? (state.accounts || []).find((a) => a && a.active) : null;
   const usage = active && (active.usage || active.lastGoodUsage);
-  const next = [usage && usage.fiveHour, usage && usage.sevenDay]
+  const scoped = usage && Array.isArray(usage.scoped) ? usage.scoped : [];
+  const next = [usage && usage.fiveHour, usage && usage.sevenDay, ...scoped]
     .map((w) => (w && w.resetsAt ? Date.parse(w.resetsAt) : NaN))
     .filter((ms) => Number.isFinite(ms) && ms > now)
     .sort((a, b) => a - b)[0];

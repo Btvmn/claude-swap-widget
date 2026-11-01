@@ -20,6 +20,10 @@
   // (SERVE_TTL_S) and only then notes its age; past that, but still trusted
   // by cswap, we show how old it is.
   const AGED_AFTER_S = 180;
+  const LOGIN_WARN_S = 3 * 86400; // warn this long before a login lapses
+  const LOGIN_URGENT_S = 86400; // from here on the warning is red
+  // These statuses already say the login is gone, or there is none to lapse.
+  const NO_LOGIN_NOTICE = Object.freeze(['relogin_required', 'no_credentials', 'api_key']);
 
   // Every usageStatus cswap 0.26–0.27 emits besides "ok", as i18n keys. The
   // menu line uses `menuLine.<status>` (lowercase where the language wants
@@ -64,6 +68,9 @@
     'badge.pace': '7d ahead of pace',
     'badge.tip.pace': 'Used {pct}% — faster than an even pace to the weekly reset',
     'badge.tip.paceExpected': 'Used {pct}%; an even pace would be {expected}% by now',
+    'badge.loginSoon': 'Login expires in {time}',
+    'badge.loginExpired': 'Login expired',
+    'badge.tip.login': 'Log in to this account again in Claude Code, then run: cswap add --slot {n}',
     'card.accountN': 'Account {n}',
     'cd.seconds': '{s}s',
     'cd.minutes': '{m}m',
@@ -87,6 +94,10 @@
     'trayTip.notUpdated': 'not updated',
     'trayTip.stale': 'stale',
     'trayTip.old': '{age} old',
+    'trayTip.model': '{name}: {pct}%',
+    'trayTip.noSession': 'no 5-hour limit',
+    'trayTip.loginSoon': 'login expires in {time}',
+    'trayTip.loginExpired': 'login expired',
     'menuLine.reset': '{window} reset',
     'menuLine.ahead': '(ahead)',
     'menuLine.disabled': 'disabled',
@@ -98,6 +109,8 @@
     'menuLine.no_credentials': 'no credentials',
     'menuLine.api_key': 'API key',
     'menuLine.unavailable': 'usage unavailable',
+    'menuLine.loginSoon': 'login expires in {time}',
+    'menuLine.loginExpired': 'login expired',
   });
 
   function has(obj, key) {
@@ -173,6 +186,66 @@
     return typeof v === 'number' && Number.isFinite(v) ? v : null;
   }
 
+  // A window with no number is missing, never 0.
+  function hasPct(w) {
+    return Boolean(w) && num(w.pct) !== null;
+  }
+
+  function modelName(w) {
+    return w.name || '?';
+  }
+
+  // Per-model weekly windows that have a number, fullest first (ties keep cswap's order).
+  function modelWindows(usage) {
+    const scoped = usage && Array.isArray(usage.scoped) ? usage.scoped : [];
+    return scoped.filter(hasPct).sort((a, b) => b.pct - a.pct);
+  }
+
+  // The windows that get a ring in the hero and a line in the rows, at most
+  // two, as slots { kind: '5h' | '7d' | 'model', win, name? }. `rest` = the
+  // model windows not promoted (they stay under "more limits").
+  //   5h + 7d            → [5h, 7d]        (models stay in rest)
+  //   5h, no 7d, model   → [5h, model]     (Team seats, claude-swap #476)
+  //   5h only            → [5h]
+  //   7d + model, no 5h  → [model, 7d]     (Ultra: the week keeps its place on the right)
+  //   7d only            → [7d]
+  //   models only        → [top model, second model if any]
+  //   nothing            → []
+  function mainWindows(usage) {
+    const five = usage && hasPct(usage.fiveHour) ? { kind: '5h', win: usage.fiveHour } : null;
+    const seven = usage && hasPct(usage.sevenDay) ? { kind: '7d', win: usage.sevenDay } : null;
+    const models = modelWindows(usage);
+    const free = 2 - (five ? 1 : 0) - (seven ? 1 : 0);
+    const promoted = models.slice(0, free).map((win) => ({ kind: 'model', win, name: modelName(win) }));
+    return { shown: [five, ...promoted, seven].filter(Boolean), rest: models.slice(free) };
+  }
+
+  // Fresh data (row.usage, not lastGoodUsage) that has limits but no 5-hour
+  // window at all. Only this may claim "no 5-hour limit": stale data shows what
+  // it has and claims nothing, and so does a window cswap sends without a number.
+  // cswap does not expose the plan, so never say more than this about an account.
+  function noSessionLimit(row) {
+    const usage = row && row.usage;
+    return Boolean(usage) && !usage.fiveHour && mainWindows(usage).shown.length > 0;
+  }
+
+  // null, or { at: ms, seconds: >=0, expired, urgent } when the stored login
+  // lapses in less than LOGIN_WARN_S (or already has). After that the slot is
+  // relogin_required and only a fresh /login fixes it, so the UI warns ahead.
+  function loginExpiry(row, now = Date.now()) {
+    const raw = row && row.loginExpiresAt;
+    const at = typeof raw === 'string' ? Date.parse(raw) : NaN;
+    if (!Number.isFinite(at)) return null;
+    const left = (at - now) / 1000;
+    if (left >= LOGIN_WARN_S) return null;
+    return { at, seconds: Math.max(0, left), expired: left <= 0, urgent: left < LOGIN_URGENT_S };
+  }
+
+  // loginExpiry, when the row's status does not already say it.
+  function loginNotice(row, now = Date.now()) {
+    return NO_LOGIN_NOTICE.includes(row && row.usageStatus) ? null : loginExpiry(row, now);
+  }
+
   // 45s, 12m, 2h 13m, 3d 4h; "1 ч 30 мин", "1 Std. 30 Min." with a translator.
   // Same rule as I18n.formatDuration (test/i18n.test.js pins the English).
   function formatDuration(seconds, t) {
@@ -210,7 +283,7 @@
   }
 
   // [{key, label, tone, title?}], labels and titles in the translator's language.
-  function badges(row, t) {
+  function badges(row, t, now = Date.now()) {
     const tt = tr(t);
     const out = [];
     if (row.active) out.push({ key: 'active', label: tt('badge.active'), tone: 'accent', title: tt('badge.activeTip') });
@@ -224,6 +297,11 @@
         // cswap's own word, untranslated
         out.push({ key: st, label: String(st).replace(/_/g, ' '), tone: 'muted' });
       }
+    }
+    const login = loginNotice(row, now);
+    if (login) {
+      const label = login.expired ? tt('badge.loginExpired') : tt('badge.loginSoon', { time: formatDuration(login.seconds, tt) });
+      out.push({ key: 'login', label, tone: login.urgent ? 'crit' : 'warn', title: tt('badge.tip.login', { n: row.number }) });
     }
     const eff = effectiveUsage(row);
     if (eff.stale) {
@@ -280,6 +358,8 @@
     if (row.disabled) notes.push(tt('menuLine.disabled'));
     const st = row.usageStatus;
     if (st && st !== 'ok') notes.push(has(STATUS_BADGES, st) ? tt(`menuLine.${st}`) : String(st).replace(/_/g, ' '));
+    const login = loginNotice(row, now);
+    if (login) notes.push(login.expired ? tt('menuLine.loginExpired') : tt('menuLine.loginSoon', { time: formatDuration(login.seconds, tt) }));
     if (stale) notes.push(tt('menuLine.stale'));
     const usageText = windows.filter(Boolean).join(' · ');
     return [`${row.number}  ${label(row, tt)}`, usageText, notes.length ? `— ${notes.join(', ')}` : ''].filter(Boolean).join('  ');
@@ -302,6 +382,12 @@
   // opening anything, so doubtful numbers say so: a "?" when the list could
   // not be refreshed or only last-good data is left, and no number at all
   // for a window that has rolled over since it was measured.
+  //
+  // An account with no 5-hour number but other windows (mainWindows) has its
+  // "week value" in every mode instead: sevenDay, else its fullest model. The
+  // ring shows that value (max: the fullest window) and the colour follows the
+  // fullest window, shown or not. 5h without 7d (Team seats) reads the same
+  // fallback as its second window.
   //
   // → {title, pct, level, tooltip, tooltipLines?}. `tooltip` is one line;
   // `tooltipLines` are the lines that go under it (PLAN §4.3), present only
@@ -335,7 +421,15 @@
       return p;
     };
     const five = read(tt('win.5h'), usage && usage.fiveHour);
-    const seven = read(tt('win.7d'), usage && usage.sevenDay);
+    const hasWeek = hasPct(usage && usage.sevenDay);
+    const models = modelWindows(usage);
+    let seven = null;
+    if (hasWeek) seven = read(tt('win.7d'), usage.sevenDay);
+    else if (models.length) seven = read(modelName(models[0]), models[0]);
+    const noFive = !hasPct(usage && usage.fiveHour) && mainWindows(usage).shown.length > 0;
+    // Without a 5-hour window every other model window is on the first line too.
+    const others = noFive ? models.slice(hasWeek ? 0 : 1).map((w) => read(modelName(w), w)) : [];
+    if (noSessionLimit(active)) parts.push(tt('trayTip.noSession'));
     // phase 'ok' with an error: the last refresh failed and this list is older.
     const failing = Boolean(state.error);
     if (failing) {
@@ -345,13 +439,19 @@
     if (stale) parts.push(tt('trayTip.stale'));
     const aged = agedSeconds(active);
     if (aged !== null) parts.push(tt('trayTip.old', { age: formatDuration(aged, tt) }));
+    const login = loginNotice(active, now);
+    if (login) parts.push(login.expired ? tt('trayTip.loginExpired') : tt('trayTip.loginSoon', { time: formatDuration(login.seconds, tt) }));
 
     const highest = (...ps) => ps.filter((p) => p !== null).reduce((m, p) => (m === null || p > m ? p : m), null);
     const pct = (p) => (p === null ? '–' : tt('fmt.pct', { p: Math.round(p) }));
     let text;
     let ring;
     let hot;
-    if (mode === '7d') [text, ring, hot] = [pct(seven), seven, seven];
+    if (noFive) {
+      hot = highest(seven, ...others);
+      ring = mode === 'max' ? hot : seven;
+      text = mode === 'off' ? '' : pct(ring);
+    } else if (mode === '7d') [text, ring, hot] = [pct(seven), seven, seven];
     else if (mode === 'both') [text, ring, hot] = [`${pct(five)} · ${pct(seven)}`, five, highest(five, seven)];
     else if (mode === 'max') [text, ring, hot] = [pct(highest(five, seven)), highest(five, seven), highest(five, seven)];
     else if (mode === 'off') [text, ring, hot] = ['', five, five];
@@ -383,6 +483,14 @@
       const date = I.formatDay(locale, usage.sevenDay.resetsAt, o.weeklyDateFormat || 'date', hour12);
       if (date) lines.push(`${tt('trayTip.week', { pct: Math.round(usage.sevenDay.pct) })} · ${tt('reset.on', { date })}`);
     }
+    // Only where a model stands in for a missing window; a 5h + 7d account's
+    // tooltip keeps its two lines.
+    if (!hasPct(usage.fiveHour) || !hasPct(usage.sevenDay)) {
+      for (const w of modelWindows(usage)) {
+        const date = ahead(w) ? I.formatDay(locale, w.resetsAt, o.weeklyDateFormat || 'date', hour12) : '';
+        if (date) lines.push(`${tt('trayTip.model', { name: modelName(w), pct: Math.round(w.pct) })} · ${tt('reset.on', { date })}`);
+      }
+    }
     return lines;
   }
 
@@ -394,9 +502,17 @@
     WARN,
     CRIT,
     AGED_AFTER_S,
+    LOGIN_WARN_S,
+    LOGIN_URGENT_S,
     STATUS_BADGES,
     level,
     effectiveUsage,
+    hasPct,
+    modelWindows,
+    mainWindows,
+    noSessionLimit,
+    loginExpiry,
+    loginNotice,
     formatDuration,
     secondsUntil,
     resetPassed,

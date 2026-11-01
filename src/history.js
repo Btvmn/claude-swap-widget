@@ -77,14 +77,14 @@ function measurement(row, fetchedMs) {
 }
 
 // The numbers of one line. A missing value is left out, never written as 0
-// (a 0 would draw as a drop). null when neither 5h nor 7d is there (api_key).
+// (a 0 would draw as a drop). null when none of 5h, 7d and a scoped window has
+// a number (api_key); spend alone is no reading.
 function readings(usage) {
   const five = isObject(usage.fiveHour) ? usage.fiveHour : {};
   const seven = isObject(usage.sevenDay) ? usage.sevenDay : {};
   const v = {};
   if (finite(five.pct)) v.h = round(five.pct, 1);
   if (finite(seven.pct)) v.w = round(seven.pct, 1);
-  if (!('h' in v) && !('w' in v)) return null;
   const reset = Date.parse(five.resetsAt);
   if (Number.isFinite(reset)) v.r5 = Math.round(reset / 60_000);
   if (Array.isArray(usage.scoped)) {
@@ -98,6 +98,7 @@ function readings(usage) {
     }
     if (n) v.m = m;
   }
+  if (!('h' in v) && !('w' in v) && !('m' in v)) return null;
   if (isObject(usage.spend) && finite(usage.spend.used)) {
     v.u = round(usage.spend.used, 2);
     if (finite(usage.spend.limit)) v.l = round(usage.spend.limit, 2);

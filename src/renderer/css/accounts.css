@@ -8,8 +8,9 @@
 
 /*
  * The other accounts: one row each, in their compact-bar look. Row: name and
- * actions, the pills (when there are any), then one line per window (5h, 7d)
- * with its bar, percentage and time to its reset.
+ * actions, the pills (when there are any), then one line per window (5h, 7d,
+ * or a model's week where one stands in) with its bar, percentage and time to
+ * its reset.
  */
 
 #acctList {
@@ -81,6 +82,14 @@
   color: var(--ink-2);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+/* A model's name can be long; the whole of it is in the tooltip. */
+.acct-bars .lbl.model {
+  max-width: 64px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .acct-bars .pct {

@@ -32,7 +32,8 @@ const ORDER = ['alice', 'bob', 'carol', 'dave', 'erin'].map((n) => KEYS[n]);
 // carries the timestamps); null when the row has nothing to record.
 function measuredAt(row) {
   const u = row.usage || row.lastGoodUsage;
-  if (!u || (typeof (u.fiveHour || {}).pct !== 'number' && typeof (u.sevenDay || {}).pct !== 'number')) return null;
+  const number = (w) => typeof (w || {}).pct === 'number';
+  if (!u || !(number(u.fiveHour) || number(u.sevenDay) || (u.scoped || []).some((w) => number(w) && w.name))) return null;
   const at = Date.parse(row.usage ? row.usageFetchedAt : row.lastGoodFetchedAt);
   return Number.isFinite(at) ? Math.floor(at / 1000) : null;
 }

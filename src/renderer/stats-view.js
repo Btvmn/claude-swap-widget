@@ -7,10 +7,10 @@
 
 // The statistics view (window.StatsView, PLAN §5.3–5.4): one account's usage
 // history for Today / Week / Month in one of their three looks — a line
-// (5h, 7d and spend over time), bars (each bucket's 5h peak, the current one
+// (5h, 7d and spend over time), bars (each bucket's peak, the current one
 // pinned with a pill) or summary cards (sparklines and a heat strip).
 //
-//   StatsView.open(el, ctx, {email?, organizationUuid?})   el = #stats
+//   StatsView.open(el, ctx, {email?, organizationUuid?, look?})   el = #stats
 //   StatsView.update(ctx)                                   every state while open
 //   StatsView.close()
 //
@@ -90,6 +90,13 @@
     }
     return f.format(Math.round(v) / 100);
   }
+
+  // A bucket's peak as text. With no 5-hour window it names its limit: it must
+  // never read as a session peak.
+  const peakText = (b) => {
+    const name = b.peakWindow === '7d' ? t('chart.weekly') : b.peakWindow;
+    return name ? `${name} ${fmtPct(b.peak)}` : fmtPct(b.peak);
+  };
 
   const fmtDuration = (ms) => (isNum(ms) ? Stats.fmtDurationMs(ms, t) : '—');
   const fmtMoney = (amount, currency) => I18n.formatMoney(I18nDom.locale(), amount, currency) || '—';
@@ -518,7 +525,8 @@
         : [
             [t('stats.peak'), fmtPct(stats.peak)],
             [t('stats.average'), fmtPct(stats.avg)],
-            [t('stats.nearLimit'), fmtDuration(stats.nearMs), t('stats.nearLimitTip', { pct: danger })],
+            // Near limit reads a reading's level: "session" is only true when every one had a 5h.
+            [t('stats.nearLimit'), fmtDuration(stats.nearMs), t(stats.allSession ? 'stats.nearLimitTip' : 'stats.nearLimitTipAny', { pct: danger })],
             stats.spend && stats.spend.amount > 0 ? [t('stats.spend'), fmtMoney(stats.spend.amount, stats.spend.currency)] : inUse,
           ];
     for (const [label, value, tip] of items) els.summary.append(summaryItem(label, value, tip));
@@ -549,6 +557,9 @@
   // week or a month one point per day (the session's peak, the week's level at
   // the day's end), so five-hour windows don't turn the line into a saw.
   // Spend gets its own money axis when the account spent in the window.
+  // The first line is only ever a real 5h. A period without one has the model
+  // that stands highest in its place, under its name; with no model either
+  // there is no first line, and the week carries the end dot.
 
   function renderLineChart(stats) {
     const Chart = window.Chart;
@@ -559,9 +570,11 @@
     const days = stats.buckets.filter((b) => !b.future);
     const readings = perDay ? [] : Stats.thinSamples(stats.samples);
     const val = (v) => (isNum(v) ? v : null);
-    const sessionPts = perDay ? days.map((b) => ({ x: mid(b), y: b.peak })) : readings.map((e) => ({ x: e.t * 1000, y: val(e.h) }));
+    const model = stats.hasSession ? null : stats.topModel;
+    const firstOfDay = (b) => (model ? val(b.modelLast && b.modelLast[model]) : b.sessionPeak);
+    const firstOfReading = (e) => val(model ? e.m && e.m[model] : e.h);
+    const firstPts = perDay ? days.map((b) => ({ x: mid(b), y: firstOfDay(b) })) : readings.map((e) => ({ x: e.t * 1000, y: firstOfReading(e) }));
     const weekPts = perDay ? days.map((b) => ({ x: mid(b), y: b.weekLast })) : readings.map((e) => ({ x: e.t * 1000, y: val(e.w) }));
-    const lastSession = sessionPts.reduce((last, p, i) => (p.y !== null ? i : last), -1);
     // A reading with no neighbour it is drawn to (a gap on both sides) would
     // be invisible as a line; it gets a small dot.
     const gap = perDay ? Infinity : Stats.GAP_MAX_MS;
@@ -570,6 +583,11 @@
       const pts = c.dataset.data;
       const p = pts[c.dataIndex];
       return Boolean(p) && p.y !== null && !joined(p, pts[c.dataIndex - 1]) && !joined(p, pts[c.dataIndex + 1]);
+    };
+    // The line ends in a dot: where things stand now
+    const endDot = (pts) => {
+      const last = pts.reduce((found, p, i) => (p.y !== null ? i : found), -1);
+      return (c) => (c.dataIndex === last ? 3 : lone(c) ? 2 : 0);
     };
 
     const line = {
@@ -584,27 +602,25 @@
       // watched in between (app closed, asleep), so the line breaks there.
       spanGaps: perDay ? false : Stats.GAP_MAX_MS,
     };
-    const datasets = [
-      {
-        ...line,
-        label: t('chart.session'),
-        data: sessionPts,
-        borderColor: ink.session,
-        // A soft wash under the session line gives the chart a surface without a second colour
-        backgroundColor(context) {
-          const area = context.chart.chartArea;
-          if (!area) return 'transparent';
-          const wash = context.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
-          wash.addColorStop(0, inkAlpha(ink.session, 0.1));
-          wash.addColorStop(1, inkAlpha(ink.session, 0));
-          return wash;
-        },
-        fill: 'origin',
-        // The line ends in a dot: where things stand now
-        pointRadius: (c) => (c.dataIndex === lastSession ? 3 : lone(c) ? 2 : 0),
+    const first = {
+      ...line,
+      label: model || t('chart.session'),
+      data: firstPts,
+      borderColor: ink.session,
+      // A soft wash under the first line gives the chart a surface without a second colour
+      backgroundColor(context) {
+        const area = context.chart.chartArea;
+        if (!area) return 'transparent';
+        const wash = context.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+        wash.addColorStop(0, inkAlpha(ink.session, 0.1));
+        wash.addColorStop(1, inkAlpha(ink.session, 0));
+        return wash;
       },
-      { ...line, label: t('chart.weekly'), data: weekPts, borderColor: ink.weekly, backgroundColor: 'transparent' },
-    ];
+      fill: 'origin',
+      pointRadius: endDot(firstPts),
+    };
+    const week = { ...line, label: t('chart.weekly'), data: weekPts, borderColor: ink.weekly, backgroundColor: 'transparent' };
+    const datasets = stats.hasSession || model ? [first, week] : [{ ...week, pointRadius: endDot(weekPts) }];
 
     const spend = stats.spend;
     let spendShown = false;
@@ -739,9 +755,10 @@
   }
 
   // ── B: bars ─────────────────────────────────────────────────────
-  // One bar per bucket: its 5h peak. The current bucket is marked and carries
-  // the pill; buckets still ahead are faint stubs; a past bucket without a
-  // measurement has no bar at all (0 % is a stub in the normal colour).
+  // One bar per bucket: its peak (with no 5h in it, the fullest weekly limit's,
+  // and the pill names it). The current bucket is marked and carries the pill;
+  // buckets still ahead are faint stubs; a past bucket without a measurement has
+  // no bar at all (0 % is a stub in the normal colour).
 
   function renderBarChart(stats) {
     const Chart = window.Chart;
@@ -838,7 +855,7 @@
               title: () => '',
               label: (item) => {
                 const b = buckets[item.dataIndex];
-                return `${bucketName(b, period, false)} · ${fmtPct(b.peak)}`;
+                return `${bucketName(b, period, false)} · ${peakText(b)}`;
               },
             },
           },
@@ -911,7 +928,7 @@
         cell.style.setProperty('--heat', `${(16 + (84 * Math.min(Math.max(b.peak, 0), 100)) / 100).toFixed(1)}%`);
       }
       if (b.current) cell.classList.add('current');
-      cell.title = `${bucketName(b, stats.period, true)} · ${b.future ? '—' : isNum(b.peak) ? fmtPct(b.peak) : t('stats.noData')}`;
+      cell.title = `${bucketName(b, stats.period, true)} · ${b.future ? '—' : isNum(b.peak) ? peakText(b) : t('stats.noData')}`;
       cells.append(cell);
     }
     els.heat.append(h('span', { class: 'stats-heat-label' }, t(stats.period === 'day' ? 'stats.byHour' : 'stats.byDay')), cells);
@@ -999,6 +1016,7 @@
       data = null;
       accountsStale = true;
     }
+    if (opts && STYLES.includes(opts.look)) view.style = opts.look; // a capture's own look; not saved
     stamp = c.state ? c.state.fetchedAt || null : null;
     langSig = languageSig();
     target = opts && typeof opts.email === 'string' && opts.email ? { email: opts.email, organizationUuid: opts.organizationUuid || '' } : null;

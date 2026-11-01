@@ -5,13 +5,15 @@
 // Copyright (c) 2024 Slavomir Durej; Maestro edition (c) 2026 The Maestro.
 // MIT licence; see LICENSE, "Third-party code".
 //
-// System notifications about the active account's limits (PLAN P2.5). Main
-// builds them from the service state; the page has no channel that can post
-// one (PLAN §8 item 13). A click shows the popover and never switches: the
-// widget does not switch on its own (CLAUDE.md), `cswap auto` does that.
+// System notifications about the active account's limits and about logins that
+// lapse soon (PLAN P2.5). Main builds them from the service state; the page has
+// no channel that can post one (PLAN §8 item 13). A click shows the popover and
+// never switches: the widget does not switch on its own (CLAUDE.md), `cswap
+// auto` does that.
 //
 // The rules, Maestro's checkUsageAlerts moved to main and made per account:
-// - Only the active account's 5h (session) and 7d (weekly) windows count.
+// - Only the active account's windows count: 5h (session), 7d (weekly) and,
+//   as below, its per-model ones.
 // - The first trustworthy value of each window after the start, and again
 //   after every change of the active account (ours, the menu's or
 //   `cswap auto`'s), is taken as already seen: a launch at 95 % or a switch
@@ -30,6 +32,16 @@
 // - "All accounts are at their limit" (with the earliest reset) replaces
 //   "limit reached" when every account in rotation is at 100 % too; when one
 //   of them frees up, it is named as available again.
+// - The active account's per-model weekly windows (usage.scoped, e.g. Fable)
+//   follow the same warn/danger rules per model name, plus their own "limit
+//   reached" once per window. A model at 100 % blocks neither "limit reached"
+//   nor "available again", and "all accounts" leaves its notes alone: the
+//   other models still work.
+// - A login that lapses within 3 days (every account that is not disabled)
+//   is told once per account and date. Unlike the windows it is not taken as
+//   seen at the start: an account already inside the 3 days at launch is told
+//   once per run, because that is the warning people need. An expired login
+//   only gets its badge.
 // - Nothing is read from a doubtful list (phase 'ok' with an error: the last
 //   refresh failed), from last-good data (stale), or from a window whose
 //   reset time has passed (its value no longer applies). They neither fire
@@ -39,7 +51,7 @@
 
 const { Notification } = require('electron');
 const I18n = require('../shared/i18n');
-const { effectiveUsage, resetPassed, WARN, CRIT } = require('../shared/usage');
+const { effectiveUsage, formatDuration, loginNotice, modelWindows, resetPassed, WARN, CRIT } = require('../shared/usage');
 
 const LIMIT = 100;
 const NEW_WINDOW_MS = 3_600_000; // a reset time this much later is the next window
@@ -84,9 +96,12 @@ function limitState(read) {
   return null;
 }
 
+function freshWindow() {
+  return { seeded: false, warn: false, danger: false, limit: false, end: NaN };
+}
+
 function freshFlags(key) {
-  const win = () => ({ seeded: false, warn: false, danger: false, end: NaN });
-  return { key, session: win(), weekly: win(), blocked: null }; // blocked: null until seeded
+  return { key, session: freshWindow(), weekly: freshWindow(), models: new Map(), blocked: null }; // blocked: null until seeded
 }
 
 class Notifier {
@@ -103,6 +118,7 @@ class Notifier {
     this.now = now;
     this.account = null; // freshFlags() of the active account, or null
     this.exhausted = null; // every account in rotation at its limit; null until seeded
+    this.toldLogins = new Set(); // `${identity}\n${at}` of the logins told about
   }
 
   setEnabled(on) {
@@ -122,40 +138,87 @@ class Notifier {
     if (active) {
       const read = readWindows(active, now);
       this.thresholds(active, read, notes);
+      this.models(active, now, notes);
       this.blocked(active, read, notes);
     }
     this.allExhausted(accounts, now, notes);
+    this.logins(accounts, now, notes);
     const out = this.enabled ? notes : [];
     for (const n of out) this.show(n);
     return out;
   }
 
-  // Warn and danger per window, once each per window.
+  // Warn and danger per window, once each per window. Its 100 % is left to
+  // blocked().
   thresholds(row, read, notes) {
     for (const { id } of WINDOWS) {
       const { pct, resetsAt } = read[id];
       if (pct === null) continue;
-      const f = this.account[id];
-      const end = Date.parse(resetsAt);
-      if (f.seeded && finite(f.end) && finite(end) && end - f.end > NEW_WINDOW_MS) f.warn = f.danger = false;
-      if (finite(end)) f.end = end;
-      if (!f.seeded) {
-        f.seeded = true;
-        f.danger = pct >= this.danger;
-        f.warn = pct >= this.warn;
-      } else if (pct < this.warn) {
-        f.warn = f.danger = false;
-      } else if (pct >= LIMIT) {
-        f.warn = f.danger = true;
-      } else if (pct >= this.danger) {
-        if (!f.danger) {
-          f.warn = f.danger = true;
-          notes.push(this.level(`${id}Danger`, row, pct));
-        }
-      } else if (!f.warn) {
-        f.warn = true;
-        notes.push(this.level(`${id}Warn`, row, pct));
-      }
+      const crossed = this.crossing(this.account[id], pct, resetsAt);
+      if (crossed === 'danger') notes.push(this.level(`${id}Danger`, row, pct));
+      else if (crossed === 'warn') notes.push(this.level(`${id}Warn`, row, pct));
+    }
+  }
+
+  // The same rules for each model window, which also has its own limit.
+  models(row, now, notes) {
+    const { usage, stale } = effectiveUsage(row);
+    if (stale) return;
+    const flags = this.account.models;
+    const seen = new Set(); // two windows under one name would re-arm each other
+    for (const w of modelWindows(usage)) {
+      const model = w.name || '?';
+      if (resetPassed(w, now) || seen.has(model)) continue;
+      seen.add(model);
+      if (!flags.has(model)) flags.set(model, freshWindow());
+      const pct = Math.round(w.pct);
+      const crossed = this.crossing(flags.get(model), pct, w.resetsAt);
+      if (crossed) notes.push(this.modelNote(crossed, row, model, pct, w.resetsAt));
+    }
+  }
+
+  // One reading of a window against its flags. Returns what it just crossed:
+  // 'warn', 'danger' or 'limit', or null. A first reading is taken as seen.
+  crossing(f, pct, resetsAt) {
+    const end = Date.parse(resetsAt);
+    if (f.seeded && finite(f.end) && finite(end) && end - f.end > NEW_WINDOW_MS) f.warn = f.danger = f.limit = false;
+    if (finite(end)) f.end = end;
+    if (!f.seeded) {
+      f.seeded = true;
+      f.limit = pct >= LIMIT;
+      f.danger = pct >= this.danger;
+      f.warn = pct >= this.warn;
+      return null;
+    }
+    if (pct < this.warn) {
+      f.warn = f.danger = f.limit = false;
+      return null;
+    }
+    if (pct >= LIMIT) {
+      f.warn = f.danger = true;
+      if (f.limit) return null;
+      f.limit = true;
+      return 'limit';
+    }
+    if (pct >= this.danger) {
+      if (f.danger) return null;
+      f.warn = f.danger = true;
+      return 'danger';
+    }
+    if (f.warn) return null;
+    f.warn = true;
+    return 'warn';
+  }
+
+  // Logins that lapse soon, on every account that is not disabled.
+  logins(accounts, now, notes) {
+    for (const row of accounts) {
+      const login = row.disabled ? null : loginNotice(row, now);
+      if (!login || login.expired) continue;
+      const told = `${identity(row)}\n${login.at}`;
+      if (this.toldLogins.has(told)) continue;
+      this.toldLogins.add(told);
+      notes.push(this.loginNote(row, login));
     }
   }
 
@@ -225,6 +288,23 @@ class Notifier {
 
   available(row) {
     return this.note('available', row, this.t('app.title'), this.t('notify.available', { name: this.name(row) }));
+  }
+
+  // Kind 'model' for all three, so allExhausted() never removes them as 'reached'.
+  modelNote(crossed, row, model, p, resetsAt) {
+    const name = this.name(row);
+    if (crossed === 'limit') {
+      const f = this.formats();
+      const body = Number.isFinite(Date.parse(resetsAt)) ? this.t('notify.weeklyReachedBody', { date: f.day(resetsAt), time: f.clock(resetsAt) }) : '';
+      return this.note('model', row, this.t('notify.modelReached', { name, model }), body);
+    }
+    const text = this.t(crossed === 'danger' ? 'notify.modelDanger' : 'notify.modelWarn', { name, model, p });
+    return this.note('model', row, this.t('app.title'), text);
+  }
+
+  loginNote(row, login) {
+    const title = this.t('notify.loginSoon', { name: this.name(row), time: formatDuration(login.seconds, this.t) });
+    return this.note('login', row, title, this.t('notify.loginSoonBody', { n: row.number }));
   }
 
   // The account that frees up first: for each, the later reset of the
